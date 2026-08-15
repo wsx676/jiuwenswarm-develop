@@ -1,0 +1,195 @@
+{
+ "symbol": "600519",
+ "source": "akshare/stock_financial_abstract(东方财富F10财务摘要)",
+ "statements": [
+  {
+   "period": "2026-Q2",
+   "revenue": 92278072083.21,
+   "net_profit": 44516880421.86,
+   "gross_profit": 61332027205.130005,
+   "total_assets": 309050783910.8068,
+   "total_liabilities": 46954431736.44684,
+   "shareholders_equity": 262096352174.36,
+   "operating_cashflow": 70690750119.06,
+   "gross_margin": 89.5552,
+   "net_margin": 50.7516,
+   "roe": 16.75,
+   "debt_ratio": 15.1931
+  },
+  {
+   "period": "2026-Q1",
+   "revenue": 54702912385.23,
+   "net_profit": 27242512886.45,
+   "gross_profit": 37510688860.520004,
+   "total_assets": 319918841380.8046,
+   "total_liabilities": 38782954945.114624,
+   "shareholders_equity": 281135886435.69,
+   "operating_cashflow": 26909891269.13,
+   "gross_margin": 89.7592,
+   "net_margin": 52.2245,
+   "roe": 10.57,
+   "debt_ratio": 12.1227
+  },
+  {
+   "period": "2025-Q4",
+   "revenue": 172054171890.91,
+   "net_profit": 82320067101.68,
+   "gross_profit": 114683353856.58,
+   "total_assets": 303834843322.60913,
+   "total_liabilities": 49875589413.53912,
+   "shareholders_equity": 253959253909.07,
+   "operating_cashflow": 61522204989.35,
+   "gross_margin": 91.1796,
+   "net_margin": 50.5279,
+   "roe": 32.53,
+   "debt_ratio": 16.4154
+  },
+  {
+   "period": "2025-Q3",
+   "revenue": 130903889634.88,
+   "net_profit": 64626746712.18,
+   "gross_profit": 89477735582.03,
+   "total_assets": 304738182980.07385,
+   "total_liabilities": 39033158107.22385,
+   "shareholders_equity": 265705024872.85,
+   "operating_cashflow": 38196802155.27,
+   "gross_margin": 91.2934,
+   "net_margin": 52.0801,
+   "roe": 24.64,
+   "debt_ratio": 12.8088
+  },
+  {
+   "period": "2025-Q2",
+   "revenue": 91093762553.97,
+   "net_profit": 45402962298.1,
+   "gross_profit": 62739813910.81,
+   "total_assets": 292257787317.3171,
+   "total_liabilities": 43122201054.56705,
+   "shareholders_equity": 249135586262.75003,
+   "operating_cashflow": 13119061031.33,
+   "gross_margin": 91.2993,
+   "net_margin": 52.5641,
+   "roe": 17.89,
+   "debt_ratio": 14.7549
+  },
+  {
+   "period": "2025-Q1",
+   "revenue": 51443450583.77,
+   "net_profit": 26847474238.76,
+   "gross_profit": 37010153088.13,
+   "total_assets": 312368696083.9015,
+   "total_liabilities": 44178360913.511475,
+   "shareholders_equity": 268190335170.39,
+   "operating_cashflow": 8809195646.38,
+   "gross_margin": 91.9736,
+   "net_margin": 54.8895,
+   "roe": 10.92,
+   "debt_ratio": 14.143
+  },
+  {
+   "period": "2024-Q4",
+   "revenue": 174144069958.24997,
+   "net_profit": 86228146421.62,
+   "gross_profit": 119620098505.67996,
+   "total_assets": 298944577489.2041,
+   "total_liabilities": 56933262368.604095,
+   "shareholders_equity": 242011315120.6,
+   "operating_cashflow": 92463692168.43,
+   "gross_margin": 91.9312,
+   "net_margin": 52.2734,
+   "roe": 36.02,
+   "debt_ratio": 19.0448
+  },
+  {
+   "period": "2024-Q3",
+   "revenue": 123122542625.45,
+   "net_profit": 60827552118.51,
+   "gross_profit": 83940146007.79,
+   "total_assets": 286770720482.2096,
+   "total_liabilities": 39082556244.03958,
+   "shareholders_equity": 247688164238.17,
+   "operating_cashflow": 44421386217.45,
+   "gross_margin": 91.5314,
+   "net_margin": 52.1887,
+   "roe": 26.09,
+   "debt_ratio": 13.6285
+  }
+ ],
+ "announcements": [
+  {
+   "title": "贵州茅台关于召开2026年半年度业绩说明会的公告",
+   "date": "2026-08-15",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202608141827994407.html"
+  },
+  {
+   "title": "贵州茅台关于贵州茅台集团财务有限公司的风险评估报告",
+   "date": "2026-08-15",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202608141827994404.html"
+  },
+  {
+   "title": "贵州茅台2026年半年度报告摘要",
+   "date": "2026-08-15",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202608141827994403.html"
+  },
+  {
+   "title": "贵州茅台关于会计政策变更的公告",
+   "date": "2026-08-15",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202608141827994406.html"
+  },
+  {
+   "title": "贵州茅台第五届董事会2026年度第三次会议决议公告",
+   "date": "2026-08-15",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202608141827994405.html"
+  },
+  {
+   "title": "贵州茅台2026年半年度报告",
+   "date": "2026-08-15",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202608141827994408.html"
+  },
+  {
+   "title": "贵州茅台重大事项公告",
+   "date": "2026-07-18",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202607171827064564.html"
+  },
+  {
+   "title": "贵州茅台2025年年度权益分派实施公告",
+   "date": "2026-06-22",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606211823708334.html"
+  },
+  {
+   "title": "贵州茅台关于聘任董事会秘书的公告",
+   "date": "2026-06-12",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606111823465368.html"
+  },
+  {
+   "title": "北京市金杜律师事务所关于贵州茅台酒股份有限公司2025年度股东会之法律意见书",
+   "date": "2026-06-12",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606111823465367.html"
+  },
+  {
+   "title": "贵州茅台第五届董事会2026年度第一次会议决议公告",
+   "date": "2026-06-12",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606111823465369.html"
+  },
+  {
+   "title": "贵州茅台关于职工董事选举结果的公告",
+   "date": "2026-06-12",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606111823465370.html"
+  },
+  {
+   "title": "贵州茅台2025年度股东会决议公告",
+   "date": "2026-06-12",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606111823465366.html"
+  },
+  {
+   "title": "贵州茅台董事、高级管理人员考核和薪酬管理办法",
+   "date": "2026-06-12",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606111823465365.html"
+  },
+  {
+   "title": "贵州茅台2025年度股东会会议资料",
+   "date": "2026-06-03",
+   "url": "https://data.eastmoney.com/notices/detail/600519/AN202606021823168597.html"
+  }
+ ]
+}
