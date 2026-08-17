@@ -67,6 +67,8 @@ class TestFallbackChain:
         monkeypatch.setattr(collector, "_fetch_akshare", boom)
         monkeypatch.setattr(collector, "_fetch_tencent", lambda *a: _records())
         monkeypatch.setattr(collector, "_fetch_sina", lambda *a: _records())
+        monkeypatch.setattr(  # 保持离线：不发市值接口请求
+            collector, "_fetch_valuation", lambda s: (None, None))
 
         data = collector.collect("600519", "贵州茅台",
                                  start_date="2026-01-01", end_date="2026-01-31")
@@ -78,6 +80,8 @@ class TestFallbackChain:
         monkeypatch.setattr(collector, "_fetch_akshare", lambda *a: [])
         monkeypatch.setattr(collector, "_fetch_tencent", lambda *a: [])
         monkeypatch.setattr(collector, "_fetch_sina", lambda *a: [])
+        monkeypatch.setattr(  # 保持离线：不发市值接口请求
+            collector, "_fetch_valuation", lambda s: (None, None))
 
         data = collector.collect("600519", "贵州茅台")
         assert data.records == []
@@ -97,6 +101,61 @@ class TestFallbackChain:
                                            ("000858", "五粮液")])
         assert len(results) == 1
         assert results[0].symbol == "600519"
+
+
+class TestValuation:
+    """H2 回归：市值/股本采集（PE 可算性的前置数据）"""
+
+    def test_market_cap_and_shares_unit_converted(self, monkeypatch):
+        """市值元→亿元、股本股→亿股，随行情一并落盘"""
+        import akshare as ak
+        import pandas as pd
+        info = pd.DataFrame({
+            "item": ["总市值", "流通市值", "总股本"],
+            "value": [1.9e12, 1.9e12, 1.256e9],
+        })
+        monkeypatch.setattr(
+            ak, "stock_individual_info_em", lambda **kw: info)
+        collector = QuoteCollector()
+        monkeypatch.setattr(
+            collector, "_fetch", lambda *a: (_records(), "mock行情源"))
+        data = collector.collect("600519", "贵州茅台")
+        assert data.market_cap == 19000.0   # 亿元
+        assert data.total_shares == 12.56   # 亿股
+        d = data.to_dict()
+        assert d["market_cap"] == 19000.0
+        assert d["total_shares"] == 12.56
+
+    def test_valuation_failure_keeps_quote_chain(self, monkeypatch):
+        """估值两源均失败：行情主链路不阻断，市值/股本降级 None
+        （PE 交给下游算不出 → 估值章显式说明，而非编造）"""
+        collector = QuoteCollector()
+        monkeypatch.setattr(
+            collector, "_fetch", lambda *a: (_records(), "mock行情源"))
+        monkeypatch.setattr(
+            collector, "_valuation_em", lambda s: (None, None))
+        monkeypatch.setattr(
+            collector, "_valuation_tencent", lambda s: (None, None))
+        data = collector.collect("600519", "贵州茅台")
+        assert len(data.records) == 3
+        assert data.market_cap is None
+        assert data.total_shares is None
+
+    def test_valuation_em_failure_falls_back_to_tencent(self, monkeypatch):
+        """东方财富 push2 不可达时降级腾讯实时源（市值亿元，
+        股本由 市值÷最新价 换算）"""
+        collector = QuoteCollector()
+        monkeypatch.setattr(
+            collector, "_fetch", lambda *a: (_records(), "mock行情源"))
+        monkeypatch.setattr(
+            collector, "_valuation_em",
+            lambda s: (_ for _ in ()).throw(RuntimeError("push2 down")))
+        monkeypatch.setattr(
+            collector, "_valuation_tencent",
+            lambda s: (16164.68, 12.5006))
+        data = collector.collect("600519", "贵州茅台")
+        assert data.market_cap == 16164.68
+        assert data.total_shares == 12.5006
 
 
 class TestSecidHelpers:

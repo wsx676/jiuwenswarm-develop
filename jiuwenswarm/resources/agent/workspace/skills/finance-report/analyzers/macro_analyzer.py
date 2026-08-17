@@ -17,12 +17,20 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 # akshare 宏观接口与列名关键词（值列按关键词匹配，取最新一期）
+# 列名为接口真实列名：PMI 为「制造业-指数」（非「当月值」）
 INDICATOR_SOURCES = {
     "GDP": {"func": "macro_china_gdp", "column": "同比增长"},
     "CPI": {"func": "macro_china_cpi", "column": "同比"},
-    "PMI": {"func": "macro_china_pmi", "column": "制造业-当月值"},
+    "PMI": {"func": "macro_china_pmi", "column": "制造业-指数"},
 }
 INDICATOR_SOURCE_DESC = "国家统计局（经 akshare macro_china_* 接口）"
+
+# 值域健全性校验：越界视为取错列/取错期，降级跳过（防错值进报告）
+VALUE_RANGES = {
+    "GDP": (-5.0, 30.0),   # 中国 GDP 同比历史区间约 -5%~15%
+    "CPI": (-5.0, 10.0),
+    "PMI": (30.0, 70.0),   # PMI 定义上不可能为负，实际集中于 40~60
+}
 
 # 货币/财政政策信号词表（规则化提炼，可解释）
 MONETARY_EASING = ("降准", "降息", "逆回购", "LPR下调", "宽松", "流动性投放")
@@ -94,8 +102,13 @@ class MacroAnalyzer:
 
     @staticmethod
     def _fetch_series(ak, spec: dict, name: str) -> dict:
-        """通用序列提取：最后一期为最新值，列名按关键词匹配"""
+        """通用序列提取：时间列显式升序排序取最新期，列名按关键词匹配
+
+        akshare macro_china_* 接口行序不保证（部分为新→旧），
+        直接 iloc[-1] 会取到最旧一期，必须按时间列排序后再取末行。
+        """
         df = getattr(ak, spec["func"])()
+        df = df.sort_values(by=df.columns[0])
         last = df.iloc[-1]
         # 值列：优先列名含关键词的数值列，否则最后一个数值列
         value_col = None
@@ -114,6 +127,11 @@ class MacroAnalyzer:
         if value_col is None:
             raise ValueError(f"{name} 未找到数值列")
         value = float(last[value_col])
+        lo, hi = VALUE_RANGES.get(name, (float("-inf"), float("inf")))
+        if not lo <= value <= hi:
+            raise ValueError(
+                f"{name} 值 {value} 越界 [{lo}, {hi}]"
+                f"（列：{value_col}，疑似取错列）")
         return {
             "period": str(last[df.columns[0]]),
             "value": round(value, 2),

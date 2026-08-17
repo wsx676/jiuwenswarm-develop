@@ -50,10 +50,15 @@ OUTLINE_FALLBACK: List[Tuple[str, str]] = [
 # 洞察负面信号词（评级规则用）
 NEGATIVE_HINTS = ("承压", "下滑", "警惕", "偏弱", "待观察", "杠杆偏高", "不足")
 SECTION_SOURCE = {  # 各章节固定来源标注（正文引用闸门）
-    "五、财务分析": "公司定期财报（akshare 财务摘要，东方财富 F10）",
+    # H1 回归：一/二/七章模板段含数据句，同样必须带来源标注，
+    # 否则降级报告引用率不达标、过不了自研 Reviewer 闸门
+    "一、核心观点": "公司定期财报与公开行情数据",
+    "二、投资结论与仓位建议": "公司定期财报与公开行情数据",
     "三、公司概况": "公开行情数据与权威财经媒体报道",
     "四、行业分析": "组委会公司池分组与权威财经媒体报道",
+    "五、财务分析": "公司定期财报（akshare 财务摘要，东方财富 F10）",
     "六、估值分析": "公开行情数据与公司定期财报",
+    "七、风险提示": "公司公告与权威财经媒体报道",
 }
 
 
@@ -296,11 +301,18 @@ class ReportWriter:
             payload = {"财务指标": finance_dict,
                        "最新报告期": latest_period}
         elif "估值" in title:
-            payload = {"估值指标": finance_dict.get("valuation", {}),
+            valuation = finance_dict.get("valuation", {})
+            payload = {"估值指标": valuation,
                        "最新收盘价": quote.get("latest_close"),
                        "区间涨跌幅%": quote.get("period_return"),
                        "指标期间": latest_period,
                        "盈利洞察": finance_dict.get("insights", [])[:3]}
+            # H2 回归：材料无估值指标时禁止 LLM 编造 PE 等数字
+            if not valuation:
+                payload["估值约束"] = (
+                    "材料无可溯源估值指标：禁止给出 PE/PB 等任何"
+                    "估值数字与外部预测来源，须写明「暂无可溯源"
+                    "估值数据，不作估值判断」")
         elif "风险" in title:
             payload = {"负面信号": [i for i in finance_dict.get(
                 "insights", []) if any(h in i for h in NEGATIVE_HINTS)],
@@ -382,6 +394,8 @@ class ReportWriter:
         lines.append("## 八、数据来源")
         lines.append("")
         lines += [f"- {s}" for s in sources]
+        # 来源清单含采集时间等数字，与汇总标注同段（段落级引用覆盖）
+        lines.append("数据来源：以上权威渠道来源清单汇总")
         lines += ["", "---",
                   "*免责声明：本报告由 AI Agent 自动生成，仅供参考，"
                   "不构成投资建议。*"]

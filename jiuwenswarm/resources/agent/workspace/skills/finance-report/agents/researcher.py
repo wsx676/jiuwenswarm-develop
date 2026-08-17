@@ -104,13 +104,21 @@ class ResearcherAgent:
     # 采集调度（缓存优先）
     # ------------------------------------------------------------------
     def _collect(self, kind: str, symbol: str, collect_fn) -> dict:
-        """读缓存 {symbol}_{kind}.json；缺失则实时采集并落盘"""
+        """读缓存 {symbol}_{kind}.json；缺失则实时采集并落盘
+
+        H2 回归：行情缓存缺市值字段或市值为 None（上次采集失败
+        落盘）时重新采集升级，不永远沿用残缺缓存。
+        """
         os.makedirs(self.data_dir, exist_ok=True)
         path = os.path.join(self.data_dir, f"{symbol}_{kind}.json")
         if os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as f:
-                    return json.load(f)
+                    cached = json.load(f)
+                if kind == "quote" and not cached.get("market_cap"):
+                    logger.info("行情缓存缺市值数据，重新采集升级: %s", path)
+                else:
+                    return cached
             except (OSError, json.JSONDecodeError) as e:
                 logger.warning("缓存 %s 读取失败，重新采集: %s", path, e)
         data = collect_fn()

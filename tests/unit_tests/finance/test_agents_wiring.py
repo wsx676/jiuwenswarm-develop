@@ -110,3 +110,28 @@ class TestReviewerCitationGate:
         review = ReviewerAgent().review(draft, {})
         assert review.issues == []
         assert review.passed
+
+
+class TestDegradedReportPassesReviewer:
+    def test_offline_degraded_draft_passes_review(self, monkeypatch):
+        """H1 回归：无 LLM 全降级报告也必须通过自研 Reviewer 闸门
+        （一/二/七章模板段此前缺来源标注，引用率仅 30% 空转三轮）"""
+        import generators.report_writer as rw
+        from agents.reviewer import ReviewerAgent
+        monkeypatch.setattr(
+            rw.ReportWriter, "_get_llm", lambda self: None)
+        request = SimpleNamespace(
+            report_type="company", target="600519",
+            name="贵州茅台", period="2026-Q2")
+        draft = WriterAgent({"llm": {}}).write(
+            {"finance_analysis": None,
+             "quote_data": {"name": "贵州茅台", "source": "mock行情源",
+                            "collected_at": "2026-08-17T10:00:00",
+                            "latest_close": 1400.0,
+                            "period_return": 5.2},
+             "charts": [], "citations": []},
+            request)
+        review = ReviewerAgent().review(draft, {})
+        assert review.issues == [], review.issues
+        assert review.passed
+        assert review.score >= 90.0

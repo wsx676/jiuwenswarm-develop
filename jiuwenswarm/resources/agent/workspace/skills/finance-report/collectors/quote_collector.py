@@ -50,6 +50,9 @@ class QuoteData:
     source: str = ""                 # 数据源标注（溯源与可复现）
     collected_at: str = ""           # 采集时刻（ISO 格式，溯源用）
     records: List[QuoteRecord] = field(default_factory=list)
+    # H2 回归：市值/股本（PE 可算性的前置数据，采集失败保持 None）
+    market_cap: Optional[float] = None    # 总市值（亿元）
+    total_shares: Optional[float] = None  # 总股本（亿股）
 
     @property
     def latest_close(self) -> float:
@@ -69,6 +72,8 @@ class QuoteData:
             "collected_at": self.collected_at,
             "latest_close": self.latest_close,
             "period_return": round(self.period_return, 2),
+            "market_cap": self.market_cap,
+            "total_shares": self.total_shares,
             "records": [r.to_dict() for r in self.records],
         }
 
@@ -99,6 +104,13 @@ class QuoteCollector:
         data.records = records
         data.source = source
         data.collected_at = datetime.now().isoformat(timespec="seconds")
+        # H2 回归：市值/股本同步采集（PE 真实可算）；任何失败均
+        # 降级 None，不阻断行情主链路（估值章改为显式说明而非编造）
+        try:
+            data.market_cap, data.total_shares = self._fetch_valuation(
+                symbol)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("市值/股本采集失败 %s: %s", symbol, e)
         return data
 
     def collect_batch(self, symbols: List[tuple]) -> List[QuoteData]:
@@ -128,6 +140,73 @@ class QuoteCollector:
             except Exception as e:
                 logger.warning("%s 失败 %s: %s", source, symbol, e)
         return [], ""
+
+    def _fetch_valuation(self, symbol: str) -> tuple:
+        """总市值/总股本：akshare 东方财富优先，降级腾讯实时接口
+
+        H2 修复：此前未采集市值/股本 → PE 恒为 None → 估值章节
+        无材料支撑诱发 LLM 编造；两源均失败返回 (None, None)，
+        不影响行情主链路。
+        返回：(总市值亿元, 总股本亿股)
+        """
+        try:
+            cap, shares = self._valuation_em(symbol)
+        except Exception as e:  # noqa: BLE001 单源异常降级下一源
+            logger.warning("东方财富市值/股本获取失败 %s: %s", symbol, e)
+            cap, shares = None, None
+        if cap is None and shares is None:
+            try:
+                cap, shares = self._valuation_tencent(symbol)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("腾讯市值/股本获取失败 %s: %s", symbol, e)
+                cap, shares = None, None
+        return cap, shares
+
+    @staticmethod
+    def _valuation_em(symbol: str) -> tuple:
+        """东方财富个股资料（akshare stock_individual_info_em）"""
+        try:
+            import akshare as ak
+            info = ak.stock_individual_info_em(symbol=symbol)
+            kv = dict(zip(info["item"].astype(str), info["value"]))
+            market_cap = total_shares = None
+            cap_raw = kv.get("总市值")
+            if cap_raw is not None:
+                market_cap = round(float(cap_raw) / 1e8, 2)  # 元→亿元
+            shares_raw = kv.get("总股本")
+            if shares_raw is not None:
+                total_shares = round(float(shares_raw) / 1e8, 4)  # 股→亿股
+            return market_cap, total_shares
+        except Exception as e:  # noqa: BLE001 降级新浪源
+            logger.warning("东方财富市值/股本获取失败 %s: %s", symbol, e)
+            return None, None
+
+    def _valuation_tencent(self, symbol: str) -> tuple:
+        """腾讯实时接口降级源（qt.gtimg.cn，与 K 线降级源同域）
+
+        字段下标：3=最新价、45=总市值（亿元）；接口不直接返回
+        总股本，由 总市值÷最新价 换算（与 PE 口径二同源）。
+        """
+        import requests
+
+        try:
+            session = requests.Session()
+            session.trust_env = False  # 境内站点直连，绕过系统代理
+            resp = session.get(
+                "https://qt.gtimg.cn/q=" + self._prefixed(symbol),
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            resp.raise_for_status()
+            resp.encoding = "gbk"
+            fields = resp.text.split('"')[1].split("~")
+            close = float(fields[3])
+            market_cap = float(fields[45])   # 亿元
+            if market_cap <= 0 or close <= 0:
+                return None, None
+            total_shares = round(market_cap / close, 4)  # 亿股
+            return round(market_cap, 2), total_shares
+        except Exception as e:  # noqa: BLE001 估值字段缺失不阻断行情采集
+            logger.warning("腾讯市值/股本获取失败 %s: %s", symbol, e)
+            return None, None
 
     def _fetch_akshare(
         self, symbol: str, start: str, end: str
