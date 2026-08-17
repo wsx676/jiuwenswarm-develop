@@ -54,6 +54,10 @@ dependencies = [
     "numpy>=1.24.0",
     "tree-sitter>=0.25.0,<0.26.0",
     "tree-sitter-bash>=0.25.0,<0.26.0",
+    # finance-report 技能数据采集层依赖（A 股行情/财报/公告采集）
+    "akshare>=1.17.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]

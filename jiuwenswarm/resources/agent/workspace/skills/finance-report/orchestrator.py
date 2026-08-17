@@ -1,0 +1,119 @@
+# -*- coding: utf-8 -*-
+"""多 Agent 编排器（封装为 JiuwenSwarm 技能模块，可由 Swarmflow 工作流调度）
+
+通过链式推理调度五个子 Agent，完成端到端投资决策与研报生成。
+包含自检与反馈循环：Reviewer 不通过则回流 Researcher/Writer 重做；
+报告定稿后由 Investor 完成选股评分与仓位配置。
+"""
+
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Optional
+
+from agents.planner import PlannerAgent
+from agents.researcher import ResearcherAgent
+from agents.writer import WriterAgent
+from agents.reviewer import ReviewerAgent
+from agents.investor import InvestorAgent
+
+
+@dataclass
+class ReportRequest:
+    """研报生成请求"""
+    report_type: str          # company / industry / macro
+    target: str               # 股票代码 / 行业名 / 时间周期
+    name: str = ""            # 公司名称 / 行业名称
+    period: str = ""          # 报告周期
+    max_revision_rounds: int = 2  # 最大修订轮次
+
+
+@dataclass
+class ReportResult:
+    """研报生成结果"""
+    report_type: str
+    target: str
+    content: str = ""
+    charts: list = field(default_factory=list)
+    citations: list = field(default_factory=list)
+    passed_review: bool = False
+    review_notes: str = ""
+    portfolio: dict = field(default_factory=dict)  # 投资决策结果（股票代码→仓位权重）
+
+
+class ReportOrchestrator:
+    """研报生成编排器"""
+
+    def __init__(self, config: Optional[dict] = None):
+        self.config = config or {}
+        self.output_dir = self.config.get(
+            "output_dir", os.path.join("reports", "finance-report")
+        )
+        self.planner = PlannerAgent(config)
+        self.researcher = ResearcherAgent(config)
+        self.writer = WriterAgent(config)
+        self.reviewer = ReviewerAgent(config)
+        self.investor = InvestorAgent(config)
+
+    def generate(self, request: ReportRequest) -> ReportResult:
+        """端到端生成研报"""
+        result = ReportResult(
+            report_type=request.report_type, target=request.target
+        )
+
+        # 阶段1：任务规划（链式推理起点）
+        plan = self.planner.plan(request)
+
+        # 阶段2：数据研究
+        research_data = self.researcher.research(plan)
+
+        # 阶段3 + 4：撰写 + 审查（自检反馈循环）
+        for round_idx in range(request.max_revision_rounds + 1):
+            # 撰写报告
+            draft = self.writer.write(research_data, request)
+
+            # 审查校验
+            review = self.reviewer.review(draft, research_data)
+
+            result.content = draft.content
+            result.charts = draft.charts
+            result.citations = draft.citations
+            result.passed_review = review.passed
+            result.review_notes = review.notes
+
+            if review.passed:
+                break
+
+            # 未通过：根据审查意见补充数据并重写
+            if round_idx < request.max_revision_rounds:
+                research_data = self.researcher.supplement(
+                    research_data, review.feedback
+                )
+
+        # 阶段5：投资决策（选股评分 + 仓位配置，输出 Portfolio.json）
+        if request.report_type == "company":
+            result.portfolio = self.investor.decide(result)
+
+        return result
+
+    def run_investment(self, pool_file: str, save: bool = False) -> dict:
+        """公司池批量投资决策：逐标的生成研报结论 → 评分 → 仓位配置"""
+        return self.investor.run_portfolio(pool_file, save=save,
+                                            output_dir=self.output_dir)
+
+    def save_report(self, result: ReportResult, filename: str) -> str:
+        """保存研报为 Markdown（个股报告按 股票代码.md 命名）"""
+        report_dir = os.path.join(self.output_dir, "个股投资研报")
+        os.makedirs(report_dir, exist_ok=True)
+        path = os.path.join(report_dir, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(result.content)
+        return path
+
+    def save_portfolio(self, portfolio: dict) -> str:
+        """保存投资组合为 Portfolio.json（提交格式：{"股票代码": 持仓占比}）"""
+        os.makedirs(self.output_dir, exist_ok=True)
+        path = os.path.join(self.output_dir, "Portfolio.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(portfolio, f, ensure_ascii=False, indent=2)
+        return path
