@@ -2,14 +2,28 @@
 """审查校验 Agent
 
 执行四类检查：
-1. 事实溯源校验：每个数据/论据是否有引用，引用来源是否权威
+1. 事实溯源校验：论据卡片引用 + 正文数据句引用率 ≥ 90% 闸门
+   （统一 CitationChecker 口径，与提交验收一致）
 2. 图文一致性：图表数据与正文数据是否一致
 3. 结构完整性：必要章节是否齐全
 4. 合规性校验：风险提示/免责声明/数据来源标注
 """
 
+import logging
 from dataclasses import dataclass
 from typing import List, Optional
+
+try:
+    from generators.citation_checker import CitationChecker
+except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根目录
+    import os
+    import sys
+    _p = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+    from generators.citation_checker import CitationChecker
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,17 +80,23 @@ class ReviewerAgent:
         )
 
     def _check_citations(self, draft) -> List[str]:
-        """事实溯源校验：检查数据是否标注来源"""
+        """事实溯源校验：论据卡片引用 + 正文数据句引用率闸门
+
+        与 CitationChecker 统一口径（claims 为 {text, citation} 字典）。
+        """
         issues = []
-        for claim in getattr(draft, "claims", []) or []:
-            citation = getattr(claim, "citation", "")
-            if not citation:
-                issues.append(f"论据无来源: {claim.text[:30]}...")
-            elif not any(
-                src in citation
-                for src in self.AUTHORITATIVE_SOURCES
-            ):
-                issues.append(f"来源非权威: {citation[:30]}...")
+        checker = CitationChecker()
+        claims = getattr(draft, "claims", []) or []
+        if claims:
+            issues.extend(checker.check(claims).issues)
+        # 正文数据句引用率 ≥ 90% 闸门（不达标不救，回流重写）
+        report = checker.check_report(getattr(draft, "content", "") or "")
+        if report.total_claims and report.citation_rate < checker.min_rate:
+            issues.append(
+                f"正文数据句引用率 {report.citation_rate:.0%} "
+                f"低于 {checker.min_rate:.0%} 闸门"
+                f"（{len(report.issues)} 处缺来源标注）"
+            )
         return issues
 
     def _check_chart_text_consistency(self, draft) -> List[str]:
