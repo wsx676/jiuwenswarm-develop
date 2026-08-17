@@ -47,6 +47,35 @@ class TestSafetyWhitelist:
         assert not ok and "禁止导入模块 'os'" == reason
 
 
+class TestSandboxBypassRegression:
+    """评审实测发现的绕过向量回归：动态访问原语 / 裸名 / IPython API / 格式串"""
+
+    BYPASS_PAYLOADS = [
+        # getattr 字符串式 dunder（含子类枚举链）
+        'getattr(getattr((), "__class__"), "__base__")',
+        'getattr(int, "__add__")',
+        'setattr(1, "x", 2)',
+        # 裸名不是 Attribute 节点
+        'getattr(__builtins__, "__import__")("os")',
+        '__builtins__["open"](".env")',
+        # IPython 系统命令 API
+        "get_ipython().system('echo BYPASS')",
+        "get_ipython().run_line_magic('bash', 'echo x')",
+        # str.format 格式串内嵌属性访问
+        '"{0.__class__}".format(())',
+    ]
+
+    @pytest.mark.parametrize("code", BYPASS_PAYLOADS)
+    def test_bypass_vectors_blocked(self, executor, code):
+        ok, msg = executor.execute(code)
+        assert not ok, f"绕过向量未被拦截: {code}"
+        assert "白名单" in msg
+
+    def test_normal_format_still_allowed(self, executor):
+        ok, out = executor.execute("print('{:.2f}'.format(3.14159))")
+        assert ok and "3.14" in out
+
+
 class TestStatefulExecution:
     def test_variables_persist_across_cells(self, executor):
         ok1, _ = executor.execute("x = 21 * 2")

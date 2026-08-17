@@ -69,29 +69,36 @@ class FinanceAnalyzer:
             s.period))
         latest = statements[-1]
 
-        # 盈利能力（披露口径）
-        result.profitability = {
-            "gross_margin": latest.gross_margin,
-            "net_margin": latest.net_margin,
-            "roe": latest.roe,
-        }
-        if latest.total_assets > 0:
-            result.profitability["roa"] = round(
+        # 盈利能力（披露口径；缺失指标为 None 时跳过，不写 0.0 哨兵）
+        prof = {}
+        if latest.gross_margin is not None:
+            prof["gross_margin"] = latest.gross_margin
+        if latest.net_margin is not None:
+            prof["net_margin"] = latest.net_margin
+        if latest.roe is not None:
+            prof["roe"] = latest.roe
+        if latest.total_assets and latest.net_profit is not None:
+            prof["roa"] = round(
                 latest.net_profit / latest.total_assets * 100, 2)
+        result.profitability = prof
 
         # 偿债能力
-        result.solvency = {"debt_ratio": latest.debt_ratio}
-        if latest.net_profit > 0:
-            result.solvency["cashflow_to_profit"] = round(
+        solvency = {}
+        if latest.debt_ratio is not None:
+            solvency["debt_ratio"] = latest.debt_ratio
+        if (latest.net_profit and latest.net_profit > 0
+                and latest.operating_cashflow is not None):
+            solvency["cashflow_to_profit"] = round(
                 latest.operating_cashflow / latest.net_profit, 2)
+        result.solvency = solvency
 
         # 成长能力（同比：与上年同期报告期对比，而非上一期）
         prev = self._yoy_prev(latest, statements)
         if prev is not None:
-            if prev.revenue > 0:
+            if prev.revenue and latest.revenue is not None:
                 result.growth["revenue_growth"] = round(
                     (latest.revenue / prev.revenue - 1) * 100, 2)
-            if prev.net_profit > 0:
+            if prev.net_profit and latest.net_profit is not None:
                 result.growth["net_profit_growth"] = round(
                     (latest.net_profit / prev.net_profit - 1) * 100, 2)
 
@@ -100,8 +107,10 @@ class FinanceAnalyzer:
         if pe is not None:
             result.valuation["pe"] = pe
 
-        # 生成分析洞察
+        # 生成分析洞察（同比缺失时给出说明而非假增速）
         result.insights = self._generate_insights(result, statements)
+        if len(statements) >= 2 and not result.growth:
+            result.insights.append("历史报告期不足（缺上年同期），无法计算同比增速")
 
         return result
 
@@ -119,13 +128,17 @@ class FinanceAnalyzer:
     def _yoy_prev(cls, latest: FinancialStatement,
                   statements: List[FinancialStatement]
                   ) -> Optional[FinancialStatement]:
-        """上年同期报告期（如 2026-Q2 → 2025-Q2），无则回退上一期"""
+        """上年同期报告期（如 2026-Q2 → 2025-Q2）；缺失时返回 None。
+
+        不回退上一报告期：A 股季报为累计口径，Q1 对比上期 Q4 年报
+        会产生跨季失真的假同比（如 -87% 的虚假下滑）。
+        """
         year, q = cls._period_key(latest.period)
         target = f"{year - 1}-Q{q}"
         for s in statements:
             if s.period == target:
                 return s
-        return statements[-2] if len(statements) >= 2 else None
+        return None
 
     @staticmethod
     def _annualize_factor(period: str) -> float:
@@ -140,7 +153,8 @@ class FinanceAnalyzer:
 
     def _calc_pe(self, latest: FinancialStatement,
                  quote_data: Optional[dict]) -> Optional[float]:
-        if not quote_data or latest.net_profit <= 0:
+        if (not quote_data or latest.net_profit is None
+                or latest.net_profit <= 0):
             return None
         annual_profit = latest.net_profit * self._annualize_factor(
             latest.period)  # 元
@@ -167,18 +181,21 @@ class FinanceAnalyzer:
                                   result.solvency)
         latest = statements[-1]
 
-        # 盈利能力
-        gm = prof.get("gross_margin") or 0
-        if gm > 50:
-            insights.append(f"毛利率 {gm:.1f}%，处于较高水平，议价能力强")
-        elif 0 < gm < 20:
-            insights.append(f"毛利率 {gm:.1f}%，偏低，需关注成本控制")
+        # 盈利能力（指标缺失为 None 时不触发规则，避免误读）
+        gm = prof.get("gross_margin")
+        if gm is not None:
+            if gm > 50:
+                insights.append(f"毛利率 {gm:.1f}%，处于较高水平，议价能力强")
+            elif 0 < gm < 20:
+                insights.append(f"毛利率 {gm:.1f}%，偏低，需关注成本控制")
 
-        roe = prof.get("roe") or 0
-        if roe > 15:
-            insights.append(f"ROE {roe:.1f}%，股东回报优秀（>15%）")
-        elif roe < 5 and latest.net_profit > 0:
-            insights.append(f"ROE {roe:.1f}%，股东回报偏弱")
+        roe = prof.get("roe")
+        if roe is not None:
+            if roe > 15:
+                insights.append(f"ROE {roe:.1f}%，股东回报优秀（>15%）")
+            elif (roe < 5 and latest.net_profit
+                  and latest.net_profit > 0):
+                insights.append(f"ROE {roe:.1f}%，股东回报偏弱")
 
         # 成长能力
         rev_g = growth.get("revenue_growth")
@@ -195,8 +212,8 @@ class FinanceAnalyzer:
                 insights.append(f"净利润增速 {np_g:.1f}%，盈利承压")
 
         # 偿债与现金流
-        debt = solvency.get("debt_ratio") or 0
-        if debt > 70:
+        debt = solvency.get("debt_ratio")
+        if debt is not None and debt > 70:
             insights.append(f"资产负债率 {debt:.1f}%，杠杆偏高，"
                             "需关注偿债压力")
         cf_ratio = solvency.get("cashflow_to_profit")

@@ -40,6 +40,23 @@ class TestQuoteData:
 
 
 class TestFallbackChain:
+    def test_akshare_volume_unit_converted_to_shares(self, monkeypatch):
+        """H1 回归：akshare 成交量单位为手，应×100 换算为股（与降级源一致）"""
+        import akshare as ak
+        import pandas as pd
+
+        df = pd.DataFrame([{
+            "日期": "2026-08-15", "开盘": 1400.0, "收盘": 1410.0,
+            "最高": 1420.0, "最低": 1395.0,
+            "成交量": 25000.0,  # 手
+            "涨跌幅": 0.71,
+        }])
+        monkeypatch.setattr(ak, "stock_zh_a_hist", lambda **kw: df)
+        records = QuoteCollector()._fetch_akshare(
+            "600519", "2026-08-01", "2026-08-31")
+        assert records[0].volume == 2500000.0  # 股
+        assert records[0].close == 1410.0
+
     def test_akshare_failure_falls_back_to_tencent(self, monkeypatch):
         """akshare 异常时自动降级腾讯源，并正确标注来源"""
         collector = QuoteCollector()

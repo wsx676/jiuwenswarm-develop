@@ -108,12 +108,17 @@ class InvestorAgent:
             weight = min(self.max_weight, score / total_score)
             portfolio[symbol] = round(weight, 2)
 
-        # 3. 总权重约束（≤ 1.0）：等比缩放
+        # 3. 总权重约束（≤ 1.0）：等比缩放；round 逐项舍入的累计误差
+        #    可能使和 > 1.0（提交硬约束），由末位吸收残差保证不超限
         total = sum(portfolio.values())
         if total > 1.0:
             portfolio = {
                 s: round(w / total, 2) for s, w in portfolio.items()
             }
+            last = next(reversed(portfolio))  # dict 保序，取末位
+            portfolio[last] = round(
+                1.0 - sum(w for s, w in portfolio.items()
+                          if s != last), 2)
         return portfolio
 
     def _save(self, portfolio: dict, output_dir: str, scores: dict) -> None:

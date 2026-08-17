@@ -157,7 +157,7 @@ class RAGRetriever:
     # ------------------------------------------------------------------
     def add_documents(self, docs: List[dict]) -> int:
         """向知识库添加文档（{"title","content","source"?}），返回新增块数"""
-        index = self._load_index(create=True)
+        index = self._load_index()
         new_chunks = []
         for doc in docs:
             title = doc.get("title", "")
@@ -174,9 +174,7 @@ class RAGRetriever:
                     "heading": part["heading"], "tokens": tf,
                 })
         if new_chunks:
-            merged = self._embed_chunks(index, new_chunks)
-            if not merged:
-                index["chunks"].extend(new_chunks)
+            self._embed_chunks(index, new_chunks)
             self._rebuild_stats(index)
             self._save_index(index)
         return len(new_chunks)
@@ -221,20 +219,26 @@ class RAGRetriever:
     # ------------------------------------------------------------------
     # 向量化（智谱 embedding-3 优先，本地 TF-IDF 兜底）
     # ------------------------------------------------------------------
-    def _embed_chunks(self, index: dict, new_chunks: List[dict]) -> bool:
-        """向量化新块；始终返回 True（已并入 index 并完成向量化）"""
+    def _embed_chunks(self, index: dict, new_chunks: List[dict]):
+        """向量化新块并并入 index（embedder 升级/降级时保持向量空间一致）"""
         for c in new_chunks:
             c.pop("vec", None)
         index["chunks"].extend(new_chunks)
-        if index.get("embedder") != "local" and self._try_remote(
-                index["chunks"]):
+        if index.get("embedder") == "local":
+            # 本地向量的 idf 依赖全库语料，需整体重算
+            for c in index["chunks"]:
+                c.pop("vec", None)
+            self._embed_local(index)
+            return
+        # 远端路径（None→zhipu 或 zhipu 增量）：只向量化新块，
+        # 避免增量添加时全库重算的 O(N²) API 成本（同一模型向量空间一致）
+        if self._try_remote(new_chunks):
             index["embedder"] = "zhipu"
-            return True
-        # 远端不可用或已是本地库：清理旧向量，基于全库语料重算（保持 idf 一致）
+            return
+        # 远端不可用：降级本地，全库重算（清理旧向量保证空间一致）
         for c in index["chunks"]:
             c.pop("vec", None)
         self._embed_local(index)
-        return True
 
     def _try_remote(self, chunks: List[dict], batch: int = 16) -> bool:
         """尝试智谱 embedding-3；任何失败返回 False 走本地兜底"""
@@ -407,19 +411,30 @@ class RAGRetriever:
     # ------------------------------------------------------------------
     # 索引存取
     # ------------------------------------------------------------------
-    def _load_index(self, create: bool = False) -> dict:
+    def _load_index(self) -> dict:
         if self._index is not None:
             return self._index
         if os.path.exists(self.index_file):
-            with open(self.index_file, encoding="utf-8") as f:
-                self._index = json.load(f)
+            try:
+                with open(self.index_file, encoding="utf-8") as f:
+                    self._index = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                # 索引损坏（如写入中断留下的截断 JSON）：从 docs 自动重建
+                logger.warning("索引文件损坏，从 docs 重建：%s",
+                               self.index_file)
+                self._index = {"chunks": []}
+                if os.path.isdir(self.docs_dir):
+                    self.build()
         else:
             self._index = {"chunks": []}
         return self._index
 
     def _save_index(self, index: dict):
+        # 先写临时文件再原子替换，避免进程中断留下截断 JSON
         os.makedirs(os.path.dirname(self.index_file), exist_ok=True)
-        with open(self.index_file, "w", encoding="utf-8") as f:
+        tmp = self.index_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(index, f, ensure_ascii=False)
+        os.replace(tmp, self.index_file)
         logger.info("知识库索引已保存：%d 块（embedder=%s）",
                     len(index.get("chunks", [])), index.get("embedder"))

@@ -225,8 +225,16 @@ class HybridMemory:
         if kind == "conclusion":
             if not symbol:
                 raise ValueError("kind='conclusion' 必须指定 symbol 以沉淀长期记忆")
-            self.long_term.save_summary(CompanySummary(
-                symbol=symbol, conclusion=text[:500]))
+            existing = self.long_term.get_summary(symbol)
+            if existing is not None:
+                # 合并语义：仅更新结论与时间，
+                # 保留此前沉淀的 name/sector/key_metrics/insights
+                existing.conclusion = text[:500]
+                existing.updated_at = ""  # 置空由 save_summary 刷新
+            else:
+                existing = CompanySummary(
+                    symbol=symbol, conclusion=text[:500])
+            self.long_term.save_summary(existing)
         return text
 
     def save_analysis(self, summary: CompanySummary):

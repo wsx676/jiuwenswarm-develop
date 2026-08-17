@@ -12,10 +12,19 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
-from .chart_generator import Chart
-from ..analyzers.finance_analyzer import FinanceAnalysis
+try:
+    from generators.chart_generator import Chart
+    from analyzers.finance_analyzer import FinanceAnalysis
+except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根目录
+    import os
+    import sys
+    _p = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+    from generators.chart_generator import Chart
+    from analyzers.finance_analyzer import FinanceAnalysis
 
 
 @dataclass
@@ -29,6 +38,9 @@ class ReportDraft:
 
 class ReportWriter:
     """报告撰写器"""
+
+    def __init__(self, config: Optional[dict] = None):
+        self.config = config or {}
 
     def write(
         self, research_data: dict, request

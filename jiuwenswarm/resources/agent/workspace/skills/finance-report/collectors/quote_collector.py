@@ -25,13 +25,13 @@ SINA_KLINE_URL = (
 
 @dataclass
 class QuoteRecord:
-    """行情记录（日线）"""
+    """行情记录（日线）；volume 单位统一为**股**"""
     date: str
     open: float = 0.0
     close: float = 0.0
     high: float = 0.0
     low: float = 0.0
-    volume: float = 0.0
+    volume: float = 0.0    # 成交量（股）
     change_pct: float = 0.0
 
     def to_dict(self) -> dict:
@@ -146,7 +146,9 @@ class QuoteCollector:
                 date=str(row["日期"]),
                 open=float(row["开盘"]), close=float(row["收盘"]),
                 high=float(row["最高"]), low=float(row["最低"]),
-                volume=float(row["成交量"]), change_pct=float(row["涨跌幅"]),
+                # akshare 成交量单位为手，统一换算为股（与腾讯/新浪降级源一致）
+                volume=float(row["成交量"]) * 100,
+                change_pct=float(row["涨跌幅"]),
             ))
         return records
 

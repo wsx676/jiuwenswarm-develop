@@ -4,7 +4,10 @@
 基于 IPython InteractiveShell 构建持久化、有状态的执行环境，
 让模型生成的分析代码在受控沙箱中执行，变量跨代码块保留：
 - 持久化有状态：变量在不同代码块间传递（先取数→算指标→画图）
-- AST 静态分析 + 白名单：只允许安全库导入，禁止 exec/eval 等高风险调用
+- AST 静态分析 + 白名单：只允许安全库导入，禁止 exec/eval 等高风险
+  调用与动态访问原语（getattr/字符串式 dunder/IPython 系统命令 API）。
+  注意：静态白名单无法穷尽（如 pandas 内部 open 文件、URL 请求），
+  生产环境应叠加进程级隔离作为兜底，AST 校验仅是第一道闸。
 - 预导入 pandas/numpy/matplotlib、配置中文字体（SimHei），
   捕获 stdout/stderr，追踪新变量并格式化 DataFrame 输出
 """
@@ -26,10 +29,16 @@ class CodeExecutor:
         "pandas", "numpy", "matplotlib", "datetime", "math",
         "json", "collections", "statistics", "typing", "decimal",
     }
-    # 禁止的内置函数调用
+    # 禁止的内置函数调用（含动态访问原语，防 getattr 字符串式逃逸）
     BLOCKED_BUILTINS = {"exec", "eval", "compile", "__import__",
                         "globals", "locals", "vars", "breakpoint",
-                        "input", "open", "memoryview"}
+                        "input", "open", "memoryview",
+                        "getattr", "setattr", "delattr", "dir",
+                        "type", "super", "object", "help",
+                        "exit", "quit"}
+    # 禁止引用的名字（裸名不是 Attribute 节点，需单独拦截）
+    BLOCKED_NAMES = {"__builtins__", "__import__", "get_ipython",
+                     "__loader__", "__spec__", "breakpoint"}
     # 禁止访问的 dunder 属性（防运行时逃逸静态检查）
     BLOCKED_ATTRS = {"__subclasses__", "__bases__", "__mro__",
                      "__globals__", "__builtins__", "__code__",
@@ -85,9 +94,24 @@ class CodeExecutor:
                 if isinstance(func, ast.Name) \
                         and func.id in self.BLOCKED_BUILTINS:
                     return False, f"禁止调用内置函数 '{func.id}()'"
+                # 拦 str.format 格式串内嵌属性访问（如 "{0.__class__}"）
+                if (isinstance(func, ast.Attribute)
+                        and func.attr == "format"
+                        and isinstance(func.value, ast.Constant)
+                        and isinstance(func.value.value, str)
+                        and "__" in func.value.value):
+                    return False, "禁止 format 格式串包含双下划线属性访问"
+            elif isinstance(node, ast.Name) \
+                    and node.id in self.BLOCKED_NAMES:
+                return False, f"禁止引用名字 '{node.id}'"
             elif isinstance(node, ast.Attribute):
                 if node.attr in self.BLOCKED_ATTRS:
                     return False, f"禁止访问属性 '{node.attr}'"
+            elif (isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and node.value.startswith("__")):
+                # 拦 getattr(obj, "__class__") 式字符串 dunder
+                return False, f"禁止双下划线字符串常量 '{node.value}'"
         return True, ""
 
     # ------------------------------------------------------------------
@@ -205,10 +229,19 @@ class CodeExecutor:
 
     # ------------------------------------------------------------------
     def reset(self):
-        """重置执行状态（保留预导入），用于切换标的"""
+        """重置执行状态（保留预导入），用于切换标的
+
+        注：shell 为进程级单例，多实例共享 user_ns，
+        并发分析多标的需进程隔离（见类注释安全说明）。
+        """
         if self._shell is not None:
             self._shell.reset(new_session=False)
             self._shell.run_cell(
-                "import numpy as np\nimport pandas as pd",
+                "import numpy as np\nimport pandas as pd\n"
+                "import matplotlib\nmatplotlib.use('Agg')\n"
+                "import matplotlib.pyplot as plt\n"
+                "plt.rcParams['font.sans-serif'] = ['SimHei', "
+                "'Microsoft YaHei', 'DejaVu Sans']\n"
+                "plt.rcParams['axes.unicode_minus'] = False",
                 store_history=False)
         self.cell_count = 0

@@ -104,6 +104,9 @@ class NewsCollector:
         self.min_new_per_round = int(self.config.get("min_new_per_round", 2))
         self.strict_source = bool(self.config.get("strict_source", False))
         self.proxy = self.config.get("proxy")  # Bing 走代理；None 时自动探测
+        # 单关键词 Deep Research 整体时间预算（秒）：反爬退避累计可能很长，
+        # 批量跑 49 家标的时必须兜底，防止单个关键词拖垮全流程
+        self.time_budget = float(self.config.get("time_budget", 120))
         self._llm = None
         self._llm_init = False
         # 已执行查询（全轮去重，防止精炼查询绕圈）
@@ -120,11 +123,16 @@ class NewsCollector:
         self._executed = set()
         seen_urls = set()
         queries = self._initial_queries(keyword)
+        deadline = time.monotonic() + self.time_budget
 
         for depth in range(1, max_depth + 1):
             before = len(data.items)
             round_queries = []
+            out_of_budget = False
             for query in queries:
+                if time.monotonic() > deadline:
+                    out_of_budget = True
+                    break
                 if query in self._executed:
                     continue
                 self._executed.add(query)
@@ -152,11 +160,17 @@ class NewsCollector:
             data.search_trace.append({
                 "depth": depth, "queries": round_queries,
                 "new_items": newly, "total": len(data.items),
+                "budget_exceeded": out_of_budget,
             })
             data.depth_executed = depth
             logger.info("Deep Research 第 %d 轮：查询 %d 个，新增 %d 条",
                         depth, len(round_queries), newly)
 
+            if out_of_budget:
+                logger.warning(
+                    "Deep Research 超出时间预算 %.0fs，提前终止（depth=%d）",
+                    self.time_budget, depth)
+                break
             if len(data.items) >= self.max_items:
                 break
             # 本轮几乎无新增 → 信息饱和，终止
@@ -274,7 +288,8 @@ class NewsCollector:
             html = resp.text
             if "vr-title" in html:
                 break
-            time.sleep(4 * (attempt + 1))  # 反爬限频退避
+            if attempt < 3:  # 最后一次失败后不再空等（最坏省 16s）
+                time.sleep(4 * (attempt + 1))  # 反爬限频退避
 
         items = []
         blocks = list(re.finditer(

@@ -44,6 +44,11 @@ class ReportResult:
 class ReportOrchestrator:
     """研报生成编排器"""
 
+    # 报告按类型分目录存储（提交目录规范）
+    REPORT_DIRS = {"company": "个股投资研报",
+                   "industry": "行业研报",
+                   "macro": "宏观研报"}
+
     def __init__(self, config: Optional[dict] = None):
         self.config = config or {}
         self.output_dir = self.config.get(
@@ -102,8 +107,10 @@ class ReportOrchestrator:
                                             output_dir=self.output_dir)
 
     def save_report(self, result: ReportResult, filename: str) -> str:
-        """保存研报为 Markdown（个股报告按 股票代码.md 命名）"""
-        report_dir = os.path.join(self.output_dir, "个股投资研报")
+        """保存研报为 Markdown（按报告类型分目录，个股按 股票代码.md 命名）"""
+        report_dir = os.path.join(
+            self.output_dir,
+            self.REPORT_DIRS.get(result.report_type, "其他研报"))
         os.makedirs(report_dir, exist_ok=True)
         path = os.path.join(report_dir, filename)
         with open(path, "w", encoding="utf-8") as f:

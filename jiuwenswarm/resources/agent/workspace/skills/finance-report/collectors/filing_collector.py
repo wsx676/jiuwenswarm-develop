@@ -22,25 +22,31 @@ _QUARTER = {"0331": "Q1", "0630": "Q2", "0930": "Q3", "1231": "Q4"}
 
 @dataclass
 class FinancialStatement:
-    """财务报表数据"""
+    """财务报表数据
+
+    缺失指标为 None（而非 0.0 哨兵），避免污染推导与洞察：
+    ROE 缺失时不应解读为"股东回报偏弱"，负债率缺失时不应推导总资产。
+    """
     period: str                    # 报告期 YYYY-Qn
     # 利润表
-    revenue: float = 0.0           # 营业收入
-    net_profit: float = 0.0        # 净利润（归母）
-    gross_profit: float = 0.0      # 毛利润
+    revenue: Optional[float] = None          # 营业收入
+    net_profit: Optional[float] = None       # 净利润（归母）
+    gross_profit: Optional[float] = None     # 毛利润
     # 资产负债表
-    total_assets: float = 0.0      # 总资产
-    total_liabilities: float = 0.0  # 总负债
-    shareholders_equity: float = 0.0  # 股东权益
+    total_assets: Optional[float] = None     # 总资产
+    total_liabilities: Optional[float] = None  # 总负债
+    shareholders_equity: Optional[float] = None  # 股东权益
     # 现金流量表
-    operating_cashflow: float = 0.0   # 经营现金流
+    operating_cashflow: Optional[float] = None  # 经营现金流
     # 衍生指标
-    gross_margin: float = 0.0      # 毛利率(%)
-    net_margin: float = 0.0        # 净利率(%)
-    roe: float = 0.0               # 净资产收益率(%)
-    debt_ratio: float = 0.0        # 资产负债率(%)
+    gross_margin: Optional[float] = None     # 毛利率(%)
+    net_margin: Optional[float] = None       # 净利率(%)
+    roe: Optional[float] = None              # 净资产收益率(%)
+    debt_ratio: Optional[float] = None       # 资产负债率(%)
 
     def to_dict(self) -> dict:
+        def _r(x: Optional[float]):
+            return None if x is None else round(x, 4)
         return {
             "period": self.period,
             "revenue": self.revenue, "net_profit": self.net_profit,
@@ -49,10 +55,10 @@ class FinancialStatement:
             "total_liabilities": self.total_liabilities,
             "shareholders_equity": self.shareholders_equity,
             "operating_cashflow": self.operating_cashflow,
-            "gross_margin": round(self.gross_margin, 4),
-            "net_margin": round(self.net_margin, 4),
-            "roe": round(self.roe, 4),
-            "debt_ratio": round(self.debt_ratio, 4),
+            "gross_margin": _r(self.gross_margin),
+            "net_margin": _r(self.net_margin),
+            "roe": _r(self.roe),
+            "debt_ratio": _r(self.debt_ratio),
         }
 
 
@@ -112,16 +118,17 @@ class FilingCollector:
         for _, row in common.iterrows():
             metrics.setdefault(str(row["指标"]).strip(), row)
 
-        def value(metric: str, period: str) -> float:
+        def value(metric: str, period: str) -> Optional[float]:
+            """指标值；缺失/非数值/非有限值返回 None（保留缺失语义）"""
             row = metrics.get(metric)
             if row is None or period not in row.index:
-                return 0.0
+                return None
             v = row[period]
             try:
                 v = float(v)
             except (TypeError, ValueError):
-                return 0.0
-            return v if math.isfinite(v) else 0.0
+                return None
+            return v if math.isfinite(v) else None
 
         statements = []
         for period in period_cols:
@@ -129,17 +136,22 @@ class FilingCollector:
             cost = value("营业成本", period)
             equity = value("股东权益合计(净资产)", period)
             debt_ratio = value("资产负债率", period)   # %
-            # 摘要未直接给出总资产/总负债，由净资产与资产负债率推导
-            total_assets = equity / (1 - debt_ratio / 100) if (
-                equity > 0 and debt_ratio < 100
-            ) else 0.0
+            # 摘要未直接给出总资产/总负债，由净资产与资产负债率推导；
+            # 任一缺失或退化（负债率>=100%）时不推导，保持 None
+            total_assets = None
+            if (equity is not None and equity > 0
+                    and debt_ratio is not None and debt_ratio < 100):
+                total_assets = equity / (1 - debt_ratio / 100)
+            total_liabilities = (
+                total_assets - equity if total_assets is not None else None)
             statements.append(FinancialStatement(
                 period=self._fmt_period(period),
                 revenue=revenue,
                 net_profit=value("归母净利润", period),
-                gross_profit=revenue - cost,
+                gross_profit=(revenue - cost if revenue is not None
+                              and cost is not None else None),
                 total_assets=total_assets,
-                total_liabilities=total_assets - equity,
+                total_liabilities=total_liabilities,
                 shareholders_equity=equity,
                 operating_cashflow=value("经营现金流量净额", period),
                 gross_margin=value("毛利率", period),

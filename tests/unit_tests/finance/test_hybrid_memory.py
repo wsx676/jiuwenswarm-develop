@@ -143,6 +143,22 @@ class TestHybridMemory:
         with pytest.raises(ValueError):
             mem.ingest("结论", "x", kind="conclusion")
 
+    def test_ingest_conclusion_merges_not_overwrites(self, mem):
+        """L3 回归：conclusion 沉淀合并更新，
+        不丢既有 name/sector/key_metrics/insights"""
+        mem.save_analysis(CompanySummary(
+            symbol="600519", name="贵州茅台", sector="白酒",
+            key_metrics={"roe": 30.0}, insights=["盈利质量高"]))
+        mem.ingest("新结论", "评级下调至中性", kind="conclusion",
+                   symbol="600519")
+        s = mem.long_term.get_summary("600519")
+        assert s.conclusion == "评级下调至中性"  # 结论已更新
+        assert s.name == "贵州茅台"            # 既有字段保留
+        assert s.sector == "白酒"
+        assert s.key_metrics == {"roe": 30.0}
+        assert s.insights == ["盈利质量高"]
+        assert s.updated_at                    # 时间已刷新
+
     def test_build_context_injects_peer_summaries(self, mem):
         mem.save_analysis(CompanySummary(
             symbol="000858", name="五粮液", sector="白酒",

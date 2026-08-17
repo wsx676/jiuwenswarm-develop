@@ -81,6 +81,31 @@ class TestRetrieve:
         assert local_rag.add_documents(DOCS) == n
 
 
+class TestPersistence:
+    def test_new_instance_loads_saved_index(self, tmp_path, monkeypatch):
+        """H3 回归：索引落盘后新实例可直接加载检索"""
+        monkeypatch.setattr(RAGRetriever, "_try_remote",
+                            lambda self, chunks, batch=16: False)
+        kb = str(tmp_path / "kb")
+        RAGRetriever({"kb_dir": kb}).add_documents(DOCS)
+        assert os.path.exists(os.path.join(kb, "index", "index.json"))
+        hits = RAGRetriever({"kb_dir": kb}).retrieve("白酒行业估值方法")
+        assert hits and hits[0].source == "白酒估值方法.md"
+
+    def test_corrupted_index_rebuilt_from_docs(self, tmp_path, monkeypatch):
+        """H3 回归：索引损坏（截断 JSON）时自动从 docs 重建，不抛异常"""
+        monkeypatch.setattr(RAGRetriever, "_try_remote",
+                            lambda self, chunks, batch=16: False)
+        kb = tmp_path / "kb"
+        rag = RAGRetriever({"kb_dir": str(kb)})
+        rag.ensure_kb()
+        with open(rag.index_file, "w", encoding="utf-8") as f:
+            f.write("{broken")
+        rag2 = RAGRetriever({"kb_dir": str(kb)})
+        hits = rag2.retrieve("白酒行业估值方法", top_k=2)
+        assert hits and all(h.source for h in hits)
+
+
 class TestColdStart:
     def test_ensure_kb_seeds_docs(self, local_rag):
         n = local_rag.ensure_kb()

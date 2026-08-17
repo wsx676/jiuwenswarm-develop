@@ -2,6 +2,8 @@
 """NewsCollector 单元测试：迭代式 Deep Research 循环、饱和终止、
 噪声过滤、来源白名单、规则降级精炼（全部 mock，无网络请求）"""
 
+from unittest.mock import MagicMock
+
 from collectors.news_collector import NewsCollector, NewsData, NewsItem
 
 
@@ -115,6 +117,35 @@ class TestFilters:
         data = nc.collect("贵州茅台")
         assert data.count == 1
         assert data.items[0].source == "新浪财经"
+
+
+class TestTimeBudgetAndBackoff:
+    def test_time_budget_early_stop(self, monkeypatch):
+        """M2 回归：超出时间预算提前终止，search_trace 留痕"""
+        nc = NewsCollector({"time_budget": -1})  # 立即超预算
+        searched = []
+        monkeypatch.setattr(
+            nc, "_search_news", lambda q, lim: searched.append(q) or [])
+        data = nc.collect("贵州茅台", max_depth=3)
+        assert searched == []            # 一个查询都未执行
+        assert data.depth_executed == 1
+        assert data.search_trace[0]["budget_exceeded"] is True
+
+    def test_sogou_backoff_no_sleep_after_last_failure(self, monkeypatch):
+        """M2 回归：搜狗第 4 次尝试仍失败后不再空等（最坏省 16s）"""
+        import requests
+
+        resp = MagicMock()
+        resp.text = "<html>empty</html>"  # 无 vr-title，视为反爬拦截
+        resp.raise_for_status.return_value = None
+        sleeps = []
+        monkeypatch.setattr(
+            requests.Session, "get", lambda self, *a, **kw: resp)
+        monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+        items = NewsCollector()._search_sogou("贵州茅台", 10)
+        assert items == []
+        assert sleeps == [4, 8, 12]      # 末次失败后不再 sleep(16)
 
 
 class TestRuleRefine:

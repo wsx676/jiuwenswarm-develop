@@ -72,6 +72,36 @@ class TestFetchFinancials:
         latest = FilingCollector()._fetch_financials("600519", periods=1)[0]
         assert latest.gross_margin != 999.0
 
+    def test_missing_metric_stays_none(self, monkeypatch):
+        """M1 回归：缺失/非数值指标为 None（非 0.0 哨兵）；
+        负债率缺失时不推导总资产（0.0 哨兵会把 equity 当 total_assets）"""
+        import pandas as pd
+        import sys
+
+        df = pd.DataFrame([
+            {"选项": "常用指标", "指标": "营业总收入",
+             "20260630": 100.0},
+            {"选项": "常用指标", "指标": "归母净利润",
+             "20260630": 50.0},
+            {"选项": "常用指标", "指标": "毛利率",
+             "20260630": "—"},   # 非数值
+            # 缺"营业成本""资产负债率"等行
+        ])
+        ak = MagicMock()
+        ak.stock_financial_abstract = MagicMock(
+            side_effect=lambda symbol: df)
+        monkeypatch.setitem(sys.modules, "akshare", ak)
+
+        latest = FilingCollector()._fetch_financials("600519", periods=1)[0]
+        assert latest.revenue == 100.0
+        assert latest.net_profit == 50.0
+        assert latest.gross_margin is None       # 非数值 → None
+        assert latest.debt_ratio is None         # 行缺失 → None
+        assert latest.total_assets is None       # 不从 equity 推导
+        assert latest.total_liabilities is None
+        assert latest.gross_profit is None       # 缺营业成本 → None
+        assert latest.to_dict()["roe"] is None   # to_dict 不因 None 崩溃
+
 
 class TestFmtPeriod:
     def test_quarters(self):

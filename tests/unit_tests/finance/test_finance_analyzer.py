@@ -60,6 +60,14 @@ class TestMetrics:
         result = analyzer.analyze(stmts)
         assert result.growth["revenue_growth"] == 25.0  # 50/40-1
 
+    def test_missing_yoy_no_fake_growth(self, analyzer):
+        """H2 回归：缺上年同期不回退上一期（Q1 vs 上期 Q4 年报=假同比）"""
+        stmts = [_stmt("2025-Q4", revenue=400.0),
+                 _stmt("2026-Q1", revenue=50.0)]
+        result = analyzer.analyze(stmts)
+        assert result.growth == {}  # 不产生 -87% 假增速
+        assert any("上年同期" in i for i in result.insights)
+
     def test_cashflow_to_profit(self, analyzer):
         result = analyzer.analyze([_stmt("2025-Q4", cf=30.0)])
         assert result.solvency["cashflow_to_profit"] == 1.5
@@ -117,6 +125,20 @@ class TestInsights:
     def test_high_leverage_warning(self, analyzer):
         result = analyzer.analyze([_stmt("2025-Q4", dr=78.0)])
         assert any("杠杆偏高" in i for i in result.insights)
+
+    def test_missing_roe_no_false_weakness_insight(self, analyzer):
+        """M1 回归：ROE 缺失（None）且盈利为正时，
+        不应触发"ROE 0.0% 股东回报偏弱"误读"""
+        stmts = [_stmt("2024-Q4"), _stmt("2025-Q4", roe=None)]
+        result = analyzer.analyze(stmts)
+        assert "roe" not in result.profitability
+        assert not any("股东回报偏弱" in i for i in result.insights)
+
+    def test_missing_debt_ratio_skipped_in_solvency(self, analyzer):
+        """M1 回归：负债率缺失不入 solvency，不触发杠杆误报"""
+        result = analyzer.analyze([_stmt("2025-Q4", dr=None)])
+        assert "debt_ratio" not in result.solvency
+        assert not any("杠杆偏高" in i for i in result.insights)
 
     def test_fallback_insight_never_empty(self, analyzer):
         # 所有指标处于常规区间：仍至少 1 条兜底洞察
