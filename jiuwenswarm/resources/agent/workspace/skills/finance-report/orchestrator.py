@@ -72,10 +72,13 @@ class ReportOrchestrator:
         # 阶段2：数据研究
         research_data = self.researcher.research(plan)
 
-        # 阶段3 + 4：撰写 + 审查（自检反馈循环）
+        # 阶段3 + 4：撰写 + 审查（自检反馈循环：回流重写 ≤ 2 轮）
+        revision_feedback = None
         for round_idx in range(request.max_revision_rounds + 1):
-            # 撰写报告
-            draft = self.writer.write(research_data, request)
+            # 撰写报告（修订轮带上一轮审查反馈定向收敛）
+            draft = self.writer.write(
+                research_data, request,
+                revision_feedback=revision_feedback)
 
             # 审查校验
             review = self.reviewer.review(draft, research_data)
@@ -89,11 +92,15 @@ class ReportOrchestrator:
             if review.passed:
                 break
 
-            # 未通过：根据审查意见补充数据并重写
+            # 未通过：定向补采数据缺口 + 问题清单回流 Writer 重写；
+            # 2 轮未过则以当前稿放行并留痕（不阻断交付）
             if round_idx < request.max_revision_rounds:
                 research_data = self.researcher.supplement(
                     research_data, review.feedback
                 )
+                revision_feedback = review.feedback
+            else:
+                result.review_notes += "；已达最大修订轮次，按当前稿放行"
 
         # 阶段5：投资决策（选股评分 + 仓位配置，输出 Portfolio.json）
         if request.report_type == "company":

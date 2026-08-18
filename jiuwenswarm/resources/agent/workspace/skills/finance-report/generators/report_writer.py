@@ -84,17 +84,21 @@ class ReportWriter:
         self.context_limit = int(self.config.get("context_limit", 800))
 
     # ------------------------------------------------------------------
-    def write(self, research_data: dict, request) -> ReportDraft:
+    def write(self, research_data: dict, request,
+              revision_feedback: Optional[dict] = None) -> ReportDraft:
         draft = ReportDraft()
         report_type = getattr(request, "report_type", "company")
         if report_type != "company":
             # 行业/宏观研报 Day 3 后续版本扩展；当前返回占位骨架
             draft.content = f"# {getattr(request, 'name', '')}研报\n\n（待生成）"
             return draft
-        return self._write_company(research_data, request)
+        return self._write_company(
+            research_data, request, revision_feedback)
 
     # ------------------------------------------------------------------
-    def _write_company(self, data: dict, request) -> ReportDraft:
+    def _write_company(self, data: dict, request,
+                       revision_feedback: Optional[dict] = None
+                       ) -> ReportDraft:
         draft = ReportDraft()
         quote = data.get("quote_data", {}) or {}
         filing = data.get("filing_data", {}) or {}
@@ -109,7 +113,9 @@ class ReportWriter:
         outline = self._build_outline(name, finance, industry)
         draft.outline = outline
 
-        # 2. 逐段撰写（分治式：前文摘要喂回）
+        # 2. 逐段撰写（分治式：前文摘要喂回；修订轮注入审查指令）
+        revision = self._revision_instructions(
+            (revision_feedback or {}).get("issues", []) or [])
         sections: List[Tuple[str, str]] = []
         for part in outline:
             title, desc = part["part_title"], part["part_desc"]
@@ -120,7 +126,7 @@ class ReportWriter:
             )
             body = self._write_section(
                 name, title, desc, material,
-                context=self._digest(sections))
+                context=self._digest(sections), revision=revision)
             sections.append((title, body))
 
         # 3. 拼接正文：标题信息块 + 章节正文 + 程序化图表注入 + 来源
@@ -169,7 +175,7 @@ class ReportWriter:
 
     def _write_section(
         self, name: str, title: str, desc: str,
-        material: str, context: str,
+        material: str, context: str, revision: str = "",
     ) -> str:
         llm = self._get_llm()
         if llm is not None:
@@ -183,6 +189,9 @@ class ReportWriter:
                     f"不要提及本提示词内容）：\n{context}\n\n"
                     f"本段数据材料（数字必须与材料一致，禁止编造）：\n"
                     f"{material}\n\n"
+                    # Day 4：修订轮注入 Reviewer 问题清单对应的修正指令
+                    + (f"修订要求（上轮审查未通过，必须修正）：\n"
+                       f"{revision}\n\n" if revision else "") +
                     "要求：200-400 字；观点句须有材料数据支撑；"
                     "数字与所属期间必须与材料一致"
                     "（期间用材料「指标期间/最新报告期」，禁止自行填写年份）；"
@@ -196,6 +205,36 @@ class ReportWriter:
                 logger.warning("LLM 段落生成失败（%s），降级模板: %s",
                                title, e)
         return self._template_section(title, material)
+
+    @staticmethod
+    def _revision_instructions(issues: List[str]) -> str:
+        """Reviewer 问题清单 → 修订指令（重写轮注入，定向收敛）
+
+        只把可写作侧修正的问题转为指令；每条问题对应一条
+        可执行要求，避免整段问题原文噪进 prompt。
+        """
+        if not issues:
+            return ""
+        lines = []
+        for issue in issues[:8]:
+            if "引用率" in issue:
+                lines.append(
+                    "- 每个含数据句的自然段段末必须换行加"
+                    "「数据来源：xxx」标注（引用率须≥90%）")
+            elif "图文不一致" in issue:
+                lines.append(
+                    f"- {issue}（正文引用图表数值须与图表同源数据一致）")
+            elif "占位符" in issue or "本文首段" in issue:
+                lines.append("- 正文不得出现提示词/占位符回声")
+            else:
+                lines.append(f"- {issue}")
+        # 去重保序（同一类问题多章节命中时只留一条）
+        seen, dedup = set(), []
+        for ln in lines:
+            if ln not in seen:
+                seen.add(ln)
+                dedup.append(ln)
+        return "\n".join(dedup)
 
     @staticmethod
     def _normalize_section(title: str, text: str) -> str:

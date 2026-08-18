@@ -206,6 +206,106 @@ class TestRunReportArgparse:
             == run_report.DEFAULT_OUTPUT_DIR
 
 
+class TestRevisionFeedbackLoop:
+    """Day 4 回归：Reviewer 不通过 → 问题清单回流 Writer 重写，
+    ≤2 轮收敛（此前 orchestrator 重写轮不带反馈，盲写难收敛）"""
+
+    def test_revision_instructions_mapping(self):
+        import generators.report_writer as rw
+        out = rw.ReportWriter._revision_instructions([
+            "正文数据句引用率 80% 低于 90% 闸门（2 处缺来源标注）",
+            "图文不一致: 股价走势的 latest_close=1286.09 未在正文出现",
+            "正文数据句引用率 80% 低于 90% 闸门（2 处缺来源标注）",
+        ])
+        assert "数据来源" in out
+        assert "图文不一致" in out
+        assert out.count("引用率须≥90%") == 1   # 同类问题去重
+
+    def test_no_issues_no_instructions(self):
+        import generators.report_writer as rw
+        assert rw.ReportWriter._revision_instructions([]) == ""
+
+    def test_writer_receives_revision_feedback(self, monkeypatch):
+        """WriterAgent.write 透传 revision_feedback 到 ReportWriter"""
+        import generators.report_writer as rw
+        from agents.writer import WriterAgent
+        seen = {}
+
+        def fake_write(self, data, request, revision_feedback=None):
+            seen["feedback"] = revision_feedback
+            return rw.ReportDraft(content="# x")
+
+        monkeypatch.setattr(rw.ReportWriter, "write", fake_write)
+        feedback = {"issues": ["缺失免责声明"], "research_data": {}}
+        WriterAgent({}).write({}, SimpleNamespace(
+            report_type="company", target="600519"),
+            revision_feedback=feedback)
+        assert seen["feedback"] == feedback
+
+    def test_orchestrator_loop_converges_with_feedback(self, monkeypatch):
+        """首轮不过→带反馈重写→第二轮通过（反馈回流端到端）"""
+        from orchestrator import ReportOrchestrator, ReportRequest
+        orch = ReportOrchestrator({})
+        monkeypatch.setattr(
+            orch.planner, "plan", lambda req: {"report_type": "company",
+                                               "target": "600519"})
+        monkeypatch.setattr(
+            orch.researcher, "research", lambda plan: {})
+        monkeypatch.setattr(
+            orch.researcher, "supplement",
+            lambda data, fb: dict(data, supplemented=True))
+
+        drafts = []
+
+        def fake_write(data, request, revision_feedback=None):
+            drafts.append(revision_feedback)
+            return SimpleNamespace(
+                content="x", charts=[], citations=[])
+        monkeypatch.setattr(orch.writer, "write", fake_write)
+
+        reviews = [False, True]
+        monkeypatch.setattr(
+            orch.reviewer, "review",
+            lambda draft, data: SimpleNamespace(
+                passed=reviews.pop(0), score=80.0,
+                notes="n", issues=["正文数据句引用率 80% 低于闸门"],
+                feedback={"issues": ["引用率低"], "research_data": {}}))
+
+        result = orch.generate(ReportRequest(
+            report_type="company", target="600519", name="贵州茅台"))
+        assert result.passed_review
+        assert drafts[0] is None                # 首轮无反馈
+        assert drafts[1] == {"issues": ["引用率低"],
+                             "research_data": {}}   # 修订轮回流
+
+    def test_max_rounds_releases_current_draft(self, monkeypatch):
+        """2 轮未过：按当前稿放行并留痕（不阻断交付）"""
+        from orchestrator import ReportOrchestrator, ReportRequest
+        orch = ReportOrchestrator({})
+        monkeypatch.setattr(
+            orch.planner, "plan", lambda req: {"report_type": "company",
+                                               "target": "600519"})
+        monkeypatch.setattr(
+            orch.researcher, "research", lambda plan: {})
+        monkeypatch.setattr(
+            orch.researcher, "supplement", lambda d, fb: d)
+        monkeypatch.setattr(
+            orch.writer, "write",
+            lambda data, req, revision_feedback=None: SimpleNamespace(
+                content="x", charts=[], citations=[]))
+        monkeypatch.setattr(
+            orch.reviewer, "review",
+            lambda draft, data: SimpleNamespace(
+                passed=False, score=50.0, notes="未通过",
+                issues=["x"], feedback={"issues": ["x"]}))
+        result = orch.generate(ReportRequest(
+            report_type="company", target="600519", name="贵州茅台",
+            max_revision_rounds=1))
+        assert not result.passed_review
+        assert "最大修订轮次" in result.review_notes
+        assert result.content == "x"            # 当前稿放行
+
+
 class TestDegradedReportPassesReviewer:
     def test_offline_degraded_draft_passes_review(self, monkeypatch):
         """H1 回归：无 LLM 全降级报告也必须通过自研 Reviewer 闸门
