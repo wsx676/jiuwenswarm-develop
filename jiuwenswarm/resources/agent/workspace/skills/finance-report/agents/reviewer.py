@@ -10,6 +10,7 @@
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -100,14 +101,28 @@ class ReviewerAgent:
         return issues
 
     def _check_chart_text_consistency(self, draft) -> List[str]:
-        """图文一致性校验"""
+        """图文一致性校验：图表关键数值须在正文出现且无矛盾数值
+
+        M1 修复：原实现读 Chart 不存在的字段（恒通过的死代码）；
+        现基于真实字段：抽取 chart.data 标量数值，正文须存在
+        近似值（相对误差 ≤ 2%）；表格型图表 caption 即正文表格，跳过。
+        """
         issues = []
+        content = getattr(draft, "content", "") or ""
+        body_nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", content)]
         for chart in getattr(draft, "charts", []) or []:
-            for mention in getattr(chart, "text_mentions", []) or []:
-                if abs(mention - chart.data_value) > 0.01:
+            if getattr(chart, "chart_type", "") == "table":
+                continue
+            data = getattr(chart, "data", None) or {}
+            for key in ("latest_close", "period_return"):
+                value = data.get(key)
+                if not isinstance(value, (int, float)):
+                    continue
+                if not any(abs(value - n) <= max(abs(value) * 0.02, 0.005)
+                           for n in body_nums):
                     issues.append(
-                        f"图文不一致: {chart.title} "
-                        f"图表值={chart.data_value} 正文值={mention}"
+                        f"图文不一致: {chart.title} 的 {key}={value} "
+                        f"未在正文出现（或被改写）"
                     )
         return issues
 

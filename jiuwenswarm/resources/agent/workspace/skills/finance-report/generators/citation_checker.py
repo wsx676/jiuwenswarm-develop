@@ -31,6 +31,7 @@ class CitationCheck:
     cited_claims: int = 0
     authoritative_claims: int = 0
     issues: List[str] = field(default_factory=list)
+    min_rate: float = 0.9   # 与 CitationChecker.min_rate 同源（L1 统一）
 
     @property
     def citation_rate(self) -> float:
@@ -40,7 +41,9 @@ class CitationCheck:
 
     @property
     def passed(self) -> bool:
-        return self.citation_rate >= 0.9 and len(self.issues) == 0
+        # L1 修复：min_rate 统一口径（此前硬编码 0.9 且要求零 issue，
+        # 与 Reviewer 闸门双口径不一致）
+        return self.citation_rate >= self.min_rate and len(self.issues) == 0
 
 
 class CitationChecker:
@@ -68,7 +71,8 @@ class CitationChecker:
     # ------------------------------------------------------------------
     def check(self, claims: List[dict]) -> CitationCheck:
         """论据卡片级校验：每张卡片须有 citation 且命中权威白名单"""
-        result = CitationCheck(total_claims=len(claims))
+        result = CitationCheck(
+            total_claims=len(claims), min_rate=self.min_rate)
 
         for claim in claims:
             citation = claim.get("citation", "")
@@ -94,7 +98,7 @@ class CitationChecker:
         段落按空行划分；与 ReportWriter「段末换行加数据来源」约定对齐，
         跨段不覆盖（避免隔段误判）；表格/标题/图片行不计入数据句。
         """
-        result = CitationCheck()
+        result = CitationCheck(min_rate=self.min_rate)
         lines = content.splitlines()
 
         # 段落划分：空行为界；段内任意行出现来源标注则整段数据句已引用

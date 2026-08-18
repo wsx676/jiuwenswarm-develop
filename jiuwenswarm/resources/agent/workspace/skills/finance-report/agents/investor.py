@@ -39,6 +39,8 @@ class InvestorAgent:
         self.score_threshold = investor_cfg.get(
             "score_threshold", self.DEFAULT_SCORE_THRESHOLD
         )
+        # 决策备注（供 _save 写入决策日志，风控约束可追溯）
+        self.decision_notes: List[str] = []
 
     # ------------------------------------------------------------------
     # 单标的决策（供编排器在公司研报流程末尾调用）
@@ -86,11 +88,12 @@ class InvestorAgent:
         portfolio = self._allocate(scores, allowed)
 
         if save:
-            self._save(portfolio, output_dir, scores)
+            self._save(portfolio, output_dir, scores, self.decision_notes)
         return portfolio
 
     def _allocate(self, scores: dict, allowed: set) -> dict:
         """按评分分配仓位权重（风控约束硬校验）"""
+        self.decision_notes = []
         # 1. 白名单硬校验：列表外代码直接剔除（标的越界防护）
         valid = {
             s: v for s, v in scores.items()
@@ -98,10 +101,19 @@ class InvestorAgent:
         }
         if not valid:
             # 空仓决策：须在报告中阐明决策逻辑（由决策日志记录）
+            self.decision_notes.append(
+                "公司池内所有标的评分均低于阈值，空仓并阐明理由")
             return {}
 
         # 2. 按评分排序取前 N，归一化后截断单标的上限
         ranked = sorted(valid.items(), key=lambda kv: kv[1], reverse=True)
+        # M2 修复：分散度约束生效——达标标的不足 min_position_count
+        # 时留痕说明（单研报流程天然单标的，按软约束阐明而非强制空仓）
+        if len(ranked) < self.min_positions:
+            self.decision_notes.append(
+                f"分散度提示：达标标的仅 {len(ranked)} 只，"
+                f"低于建议最少持仓 {self.min_positions} 只；"
+                f"按当前达标标的配置并阐明理由")
         total_score = sum(v for _, v in ranked) or 1.0
         portfolio = {}
         for symbol, score in ranked:
@@ -121,14 +133,15 @@ class InvestorAgent:
                           if s != last), 2)
         return portfolio
 
-    def _save(self, portfolio: dict, output_dir: str, scores: dict) -> None:
+    def _save(self, portfolio: dict, output_dir: str, scores: dict,
+              notes: Optional[List[str]] = None) -> None:
         """保存 Portfolio.json 与决策日志（成果可复现性）"""
         os.makedirs(output_dir, exist_ok=True)
         with open(os.path.join(output_dir, "Portfolio.json"), "w",
                   encoding="utf-8") as f:
             json.dump(portfolio, f, ensure_ascii=False, indent=2)
 
-        # 决策日志：评分、权重、空仓理由留痕
+        # 决策日志：评分、权重、空仓理由、分散度提示留痕
         log_dir = os.path.join(output_dir, "decision_log")
         os.makedirs(log_dir, exist_ok=True)
         log = {
@@ -139,6 +152,7 @@ class InvestorAgent:
                 "公司池内所有标的评分均低于阈值，不具备投资价值"
                 if not portfolio else ""
             ),
+            "notes": notes or [],
         }
         with open(os.path.join(log_dir, "decision.json"), "w",
                   encoding="utf-8") as f:

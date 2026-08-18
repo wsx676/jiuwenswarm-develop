@@ -46,6 +46,16 @@ class TestPriceChart:
         chart = gen.generate_price_chart({"records": []}, "600519")
         assert chart.image_path == ""
 
+    def test_missing_close_rendered_as_nan_not_zero(self, gen):
+        """L2 回归：缺失收盘价为 NaN 不绘制（此前补 0 画出假点）"""
+        records = list(RECORDS)
+        records[10] = {"date": "2026-07-11", "close": None,
+                       "volume": 30000.0}
+        quote = {"name": "贵州茅台", "source": "腾讯财经日线",
+                 "latest_close": 1286.09, "records": records}
+        chart = gen.generate_price_chart(quote, symbol="600519")
+        assert chart.image_path.endswith("price_600519.png")
+
 
 class TestMarginChart:
     def test_bar_png_created(self, gen):
@@ -53,6 +63,14 @@ class TestMarginChart:
         assert chart.image_path.endswith("margin_600519.png")
         assert os.path.exists(
             os.path.join(gen.output_dir, "margin_600519.png"))
+
+    def test_partial_none_metrics_rendered(self, gen):
+        """L2 回归：个别期缺 ROE 仍出图（缺失点 NaN 不补 0）"""
+        stmts = [dict(STATEMENTS[0]),
+                 {"period": "2026-Q2", "gross_margin": 89.6,
+                  "net_margin": None, "roe": 16.8}]
+        chart = gen.generate_margin_chart(stmts, symbol="600519")
+        assert chart.image_path.endswith("margin_600519.png")
 
     def test_all_none_metrics_skipped(self, gen):
         chart = gen.generate_margin_chart(

@@ -177,7 +177,10 @@ class ReportWriter:
                 prompt = (
                     f"你是资深卖方分析师，撰写「{name}」投资研报的"
                     f"章节「{title}」。写作要点：{desc}\n\n"
-                    f"前文摘要（衔接用，勿重复）：\n{context or '（本文首段）'}\n\n"
+                    # M3 修复：无前文时用指令文案（括号占位符会被
+                    # LLM 原样复述进正文，已由 _normalize_section 兜底）
+                    f"前文摘要（衔接用，勿重复；无前文则本段为开篇，"
+                    f"不要提及本提示词内容）：\n{context}\n\n"
                     f"本段数据材料（数字必须与材料一致，禁止编造）：\n"
                     f"{material}\n\n"
                     "要求：200-400 字；观点句须有材料数据支撑；"
@@ -196,14 +199,17 @@ class ReportWriter:
 
     @staticmethod
     def _normalize_section(title: str, text: str) -> str:
-        """章节正文归一化：合并段内空行 + 剥离 LLM 重复标题行
+        """章节正文归一化：合并段内空行 + 清理占位符回声 + 剥离重复标题
 
         章节按单文本块处理：章末「数据来源」标注覆盖全章数据句
         （与引用闸门的段落级口径对齐）。
         """
         merged = re.sub(r"\n\s*\n+", "\n", text.strip())
-        prefix = re.sub(r"[#\s：:、，。]", "", title)[:6]
         lines = merged.splitlines()
+        # M3 修复：过滤 prompt 占位符回声（LLM 原样复述「本文首段」）
+        lines = [ln for ln in lines
+                 if re.sub(r"[\s（）()]", "", ln) != "本文首段"]
+        prefix = re.sub(r"[#\s：:、，。]", "", title)[:6]
         while lines:  # 剥离段首重复标题（含 # 变体，可能多行）
             head = re.sub(r"[#\s：:、，。]", "", lines[0])
             if head and (head.startswith(prefix)
@@ -314,12 +320,23 @@ class ReportWriter:
                     "估值数字与外部预测来源，须写明「暂无可溯源"
                     "估值数据，不作估值判断」")
         elif "风险" in title:
+            # M4 修复：行业/宏观风险措辞按实际取值（景气等级/
+            # 竞争排名），无数据依据时如实表达，不注入无据结论
+            prosperity = industry_dict.get("prosperity", {})
+            level = prosperity.get("level", "")
+            industry_note = {
+                "景气承压": "板块景气承压（景气度判定：景气承压）",
+                "平稳运行": "板块景气平稳，需求端波动为主要扰动",
+                "景气向上": "未见显著行业负面信号（景气度判定：景气向上）",
+            }.get(level, "行业景气数据不足，不作景气方向判断")
+            rank = (industry_dict.get("competition", {})
+                    .get("target_rank") or {})
+            if rank and min(rank.values()) > 1:
+                industry_note += "；核心指标未居板块首位，存在同业竞争压力"
             payload = {"负面信号": [i for i in finance_dict.get(
                 "insights", []) if any(h in i for h in NEGATIVE_HINTS)],
-                "行业负面": "板块景气承压" if
-                industry_dict.get("prosperity", {}).get("level") ==
-                "景气承压" else "板块竞争加剧",
-                "宏观提示": "宏观指标波动风险"}
+                "行业负面": industry_note,
+                "宏观提示": "关注宏观指标（GDP/CPI/PMI）波动对需求的传导"}
         else:  # 数据来源
             payload = {"说明": "本段由程序生成来源清单"}
         return json.dumps(payload, ensure_ascii=False, default=str)[:2600]

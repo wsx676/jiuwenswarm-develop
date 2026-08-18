@@ -33,6 +33,18 @@ class TestClaims:
         assert "财联社" in checker.AUTHORITATIVE_SOURCES
         assert "新浪财经" in checker.AUTHORITATIVE_SOURCES
 
+    def test_min_rate_propagates_to_result(self):
+        """L1 回归：passed 口径与 min_rate 同源（此前硬编码 0.9，
+        自定义阈值下判定与闸门双口径不一致）"""
+        result = CitationChecker(min_rate=0.7).check(CLAIMS)
+        assert result.min_rate == 0.7
+        # rate 0.75 ≥ 0.7，但非权威/无来源 issue 非空仍不通过
+        assert not result.passed
+        assert len(result.issues) > 0
+        ok = CitationChecker(min_rate=0.99).check(CLAIMS[:2])
+        assert ok.min_rate == 0.99
+        assert ok.passed      # rate 1.0 ≥ 0.99 且零 issue
+
 
 class TestCheckReport:
     def test_report_citation_rate(self):

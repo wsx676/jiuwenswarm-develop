@@ -166,7 +166,10 @@ class ChartGenerator:
             plt = _setup_matplotlib()
             recent = records[-250:]
             dates = [r.get("date", "") for r in recent]
-            closes = [r.get("close") or 0 for r in recent]
+            # L2 修复：缺失收盘价为 NaN 不绘制（不画 0 假点，
+            # 与全链路 None 语义一致）
+            closes = [r.get("close") if r.get("close") is not None
+                      else float("nan") for r in recent]
             fig, ax = plt.subplots(figsize=(10, 4.5), dpi=150)
             ax.plot(range(len(closes)), closes, lw=1.2, color="#1f4e9c")
             step = max(1, len(dates) // 6)
@@ -207,8 +210,10 @@ class ChartGenerator:
             width = 0.25
             fig, ax = plt.subplots(figsize=(10, 4.5), dpi=150)
             for i, (label, key, color) in enumerate(series):
-                values = [s.get(key) if s.get(key) is not None else 0
-                          for s in stmts]
+                # L2 修复：缺失指标为 NaN 不绘制（个别期缺 ROE
+                # 不画 "ROE=0" 假柱，与全链路 None 语义一致）
+                values = [s.get(key) if s.get(key) is not None
+                          else float("nan") for s in stmts]
                 ax.bar(x + (i - 1) * width, values, width,
                        label=label, color=color)
             ax.set_xticks(x)

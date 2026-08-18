@@ -29,21 +29,29 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="金融分析与投资决策 Agent")
     sub = parser.add_subparsers(dest="task", required=True)
 
-    p_company = sub.add_parser("company", help="生成公司研报")
+    # L3 修复：--output-dir 同时挂到各子命令（放子命令后不再报
+    # unrecognized arguments）；两层均用 SUPPRESS 默认值，避免子
+    # parser 默认值覆盖主 parser 已解析的显式传参（旧用法兼容）
+    def _with_output_dir(p):
+        p.add_argument(
+            "--output-dir", default=argparse.SUPPRESS, help="输出目录")
+        return p
+
+    p_company = _with_output_dir(sub.add_parser("company", help="生成公司研报"))
     p_company.add_argument("--target", required=True, help="股票代码（须在公司池列表内）")
     p_company.add_argument("--name", default="", help="公司名称")
     p_company.add_argument("--period", default="", help="报告周期")
     p_company.add_argument("--save", action="store_true", help="保存到输出目录")
 
-    p_industry = sub.add_parser("industry", help="生成行业研报")
+    p_industry = _with_output_dir(sub.add_parser("industry", help="生成行业研报"))
     p_industry.add_argument("--name", required=True, help="行业/板块名称")
     p_industry.add_argument("--save", action="store_true")
 
-    p_macro = sub.add_parser("macro", help="生成宏观研报")
+    p_macro = _with_output_dir(sub.add_parser("macro", help="生成宏观研报"))
     p_macro.add_argument("--period", required=True, help="报告周期，如 2026Q2")
     p_macro.add_argument("--save", action="store_true")
 
-    p_invest = sub.add_parser("invest", help="投资决策：选股 + 仓位配置")
+    p_invest = _with_output_dir(sub.add_parser("invest", help="投资决策：选股 + 仓位配置"))
     p_invest.add_argument(
         "--pool-file", required=True,
         help="公司池列表 xlsx 路径（example/上市公司列表.xlsx）",
@@ -51,14 +59,16 @@ def parse_args() -> argparse.Namespace:
     p_invest.add_argument("--save", action="store_true")
 
     parser.add_argument(
-        "--output-dir", default=DEFAULT_OUTPUT_DIR, help="输出目录"
+        "--output-dir", default=argparse.SUPPRESS, help="输出目录"
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    orchestrator = ReportOrchestrator({"output_dir": args.output_dir})
+    # 两层均未显式传 --output-dir 时才用默认目录（SUPPRESS 不写 namespace）
+    output_dir = getattr(args, "output_dir", DEFAULT_OUTPUT_DIR)
+    orchestrator = ReportOrchestrator({"output_dir": output_dir})
 
     if args.task == "company":
         request = ReportRequest(

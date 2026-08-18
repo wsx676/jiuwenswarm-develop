@@ -61,6 +61,31 @@ class TestAllocateWeights:
         portfolio = agent._allocate(
             {"600519": 50.0}, {"600519"})
         assert portfolio == {}
+        assert any("空仓" in n for n in agent.decision_notes)
+
+    def test_min_position_count_note_recorded(self):
+        """M2 回归：达标标的不足 min_position_count 时留痕阐明
+        （此前配置读取后从未生效）"""
+        agent = InvestorAgent()
+        scores = {"600519": 90.0, "000858": 80.0}   # 仅 2 只 < 3
+        portfolio = agent._allocate(scores, set(scores))
+        assert len(portfolio) == 2                   # 软约束：仍配置
+        assert any("分散度" in n for n in agent.decision_notes)
+
+    def test_save_writes_decision_log(self, tmp_path):
+        """M2 回归：决策日志随 Portfolio.json 落盘（风控可追溯）"""
+        import json
+        import os
+        agent = InvestorAgent()
+        scores = {"600519": 90.0}
+        portfolio = agent._allocate(scores, set(scores))
+        agent._save(portfolio, str(tmp_path), scores,
+                    agent.decision_notes)
+        log = json.load(open(
+            os.path.join(str(tmp_path), "decision_log", "decision.json"),
+            encoding="utf-8"))
+        assert log["portfolio"] == portfolio
+        assert any("分散度" in n for n in log["notes"])
 
 
 class TestPlannerWiring:
@@ -110,6 +135,75 @@ class TestReviewerCitationGate:
         review = ReviewerAgent().review(draft, {})
         assert review.issues == []
         assert review.passed
+
+
+class TestChartTextConsistency:
+    """M1 回归：图文一致性检查实装（此前读 Chart 不存在字段，
+    恒通过的死代码）"""
+
+    @staticmethod
+    def _sections():
+        return ("## 一、核心观点\n\n## 二、投资结论与仓位建议\n\n"
+                "## 五、财务分析\n\n## 六、估值分析\n\n"
+                "## 七、风险提示\n\n免责声明：x\n\n数据来源：公开行情")
+
+    def test_chart_value_missing_in_body_flagged(self):
+        from agents.reviewer import ReviewerAgent
+        chart = SimpleNamespace(
+            chart_type="line", title="股价走势",
+            data={"latest_close": 1286.09})
+        draft = SimpleNamespace(
+            content=self._sections(), claims=[], charts=[chart])
+        review = ReviewerAgent().review(draft, {})
+        assert any("图文不一致" in i for i in review.issues)
+
+    def test_chart_value_present_in_body_passes(self):
+        from agents.reviewer import ReviewerAgent
+        chart = SimpleNamespace(
+            chart_type="line", title="股价走势",
+            data={"latest_close": 1286.09})
+        draft = SimpleNamespace(
+            content=self._sections() + "\n最新收盘 1286.09 元。",
+            claims=[], charts=[chart])
+        review = ReviewerAgent().review(draft, {})
+        assert not any("图文不一致" in i for i in review.issues)
+
+
+class TestRunReportArgparse:
+    def test_output_dir_after_subcommand(self, monkeypatch):
+        """L3 回归：--output-dir 放子命令后不再报 unrecognized arguments"""
+        import run_report
+        monkeypatch.setattr(
+            run_report.sys, "argv",
+            ["run_report.py", "company", "--target", "600519",
+             "--output-dir", "out_dir"])
+        args = run_report.parse_args()
+        assert args.output_dir == "out_dir"
+        assert args.task == "company"
+
+    def test_output_dir_before_subcommand_not_overridden(self, monkeypatch):
+        """L3 回归：旧用法（主 parser 前缀传参）不被子 parser
+        默认值覆盖（此前 default 双写致绝对路径被重置为相对默认目录，
+        报告落盘到技能根下而非指定目录）"""
+        import run_report
+        monkeypatch.setattr(
+            run_report.sys, "argv",
+            ["run_report.py", "--output-dir", "abs_out",
+             "company", "--target", "600519"])
+        args = run_report.parse_args()
+        assert args.output_dir == "abs_out"
+
+    def test_output_dir_default_fallback(self, monkeypatch):
+        """两层均未显式传参：main 层 getattr 回退默认目录"""
+        import run_report
+        monkeypatch.setattr(
+            run_report.sys, "argv",
+            ["run_report.py", "company", "--target", "600519"])
+        args = run_report.parse_args()
+        assert not hasattr(args, "output_dir")   # SUPPRESS 不写 namespace
+        assert getattr(args, "output_dir",
+                       run_report.DEFAULT_OUTPUT_DIR) \
+            == run_report.DEFAULT_OUTPUT_DIR
 
 
 class TestDegradedReportPassesReviewer:

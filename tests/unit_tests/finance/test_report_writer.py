@@ -145,6 +145,13 @@ class TestNormalizeSection:
         assert "\n\n" not in out          # 段内空行合并（章末来源覆盖全章）
         assert "数据来源：公司定期财报" in out
 
+    def test_filters_placeholder_echo(self):
+        """M3 回归：LLM 原样复述 prompt 占位符「本文首段」时整行剔除"""
+        text = "本文首段\n营收 500 亿元。\n数据来源：公司定期财报"
+        out = ReportWriter._normalize_section("一、核心观点", text)
+        assert "本文首段" not in out
+        assert "营收 500 亿元。" in out
+
 
 class TestSourcesAndClaims:
     def test_sources_list_and_claims(self, data, request_):
