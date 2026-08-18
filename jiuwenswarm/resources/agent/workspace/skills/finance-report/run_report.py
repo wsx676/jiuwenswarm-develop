@@ -12,6 +12,7 @@
     python run_report.py industry --name 半导体 --save
     python run_report.py macro --period 2026Q2 --save
     python run_report.py invest --pool-file example/上市公司列表.xlsx --save
+    python run_report.py invest --pool-file example/上市公司列表.xlsx --sector 消费 --save
 """
 
 import argparse
@@ -56,6 +57,9 @@ def parse_args() -> argparse.Namespace:
         "--pool-file", required=True,
         help="公司池列表 xlsx 路径（example/上市公司列表.xlsx）",
     )
+    p_invest.add_argument(
+        "--sector", default="",
+        help="板块名（单板块批量打通，如 消费）；缺省全池")
     p_invest.add_argument("--save", action="store_true")
 
     parser.add_argument(
@@ -100,7 +104,8 @@ def main() -> int:
             print(f"宏观研报已保存: {path}")
 
     elif args.task == "invest":
-        portfolio = orchestrator.run_investment(args.pool_file, save=args.save)
+        portfolio = orchestrator.run_investment(
+            args.pool_file, save=args.save, sector=args.sector)
         print(json.dumps(portfolio, ensure_ascii=False, indent=2))
 
     return 0

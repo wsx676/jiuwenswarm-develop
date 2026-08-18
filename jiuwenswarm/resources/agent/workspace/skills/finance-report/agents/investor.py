@@ -54,15 +54,81 @@ class InvestorAgent:
         return {result.target: round(min(self.max_weight, score / 200.0), 2)}
 
     def score_report(self, result) -> float:
-        """对研报结论打分（0-100）
+        """对研报结论打分（0-100，纯规则可复现，无随机）
 
-        TODO(Day 4): 规则打分（财务质量/估值/成长性/动量）+ LLM 修正；
-        当前为占位实现：审查通过给基础分，按审查得分折算。
+        因子打分基于 research_data 中的财务/行情指标（见
+        score_research）；审查未通过的研报不予配置（0 分），
+        避免低质报告影响组合。
         """
         if not result.passed_review:
             return 0.0
-        # TODO: 接入财务/估值/动量因子规则打分
-        return 60.0
+        return self.score_research(getattr(result, "research_data", {}) or {})
+
+    def score_research(self, research_data: dict) -> float:
+        """因子打分（0-100，确定性规则，成果可复现）
+
+        因子与权重（单标的上限/分散度由 _allocate 硬约束）：
+        - 财务质量 25：ROE/毛利率/资产负债率
+        - 成长性   20：营收/净利润同比
+        - 估值     20：PE 合理性（负值或过高扣分）
+        - 动量     15：区间涨跌幅
+        - 风控     20：数据完整性/现金流质量/风险信号
+        """
+        finance = research_data.get("finance_analysis")
+        quote = research_data.get("quote_data", {}) or {}
+        score = 0.0
+
+        # 1. 财务质量（盈利能力 + 偿债安全）
+        prof = getattr(finance, "profitability", None) or {}
+        solvency = getattr(finance, "solvency", None) or {}
+        roe = prof.get("roe")
+        if roe is not None:
+            score += 10 if roe >= 15 else (7 if roe >= 8 else (4 if roe > 0 else 0))
+        gross = prof.get("gross_margin")
+        if gross is not None:
+            score += 8 if gross >= 40 else (5 if gross >= 20 else 2)
+        debt = solvency.get("debt_ratio")
+        if debt is not None:
+            score += 7 if debt <= 40 else (4 if debt <= 60 else 1)
+
+        # 2. 成长性（同比口径；缺失不加分，不假增速）
+        growth = getattr(finance, "growth", None) or {}
+        rev_g = growth.get("revenue_growth")
+        if rev_g is not None:
+            score += 10 if rev_g >= 15 else (6 if rev_g >= 5 else (3 if rev_g >= 0 else 0))
+        np_g = growth.get("net_profit_growth")
+        if np_g is not None:
+            score += 10 if np_g >= 15 else (6 if np_g >= 5 else (3 if np_g >= 0 else 0))
+
+        # 3. 估值（PE 年化口径：负值亏损不得分，过高估值扣分）
+        pe = (getattr(finance, "valuation", None) or {}).get("pe")
+        if pe is not None:
+            if pe <= 0:
+                score += 0
+            elif pe <= 25:
+                score += 20
+            elif pe <= 40:
+                score += 12
+            elif pe <= 60:
+                score += 5
+
+        # 4. 动量（区间涨跌幅）
+        ret = quote.get("period_return")
+        if isinstance(ret, (int, float)):
+            score += 15 if ret >= 10 else (10 if ret >= 0 else (4 if ret >= -10 else 0))
+
+        # 5. 风控与数据质量（完整性/现金流/风险信号）
+        if finance is not None and quote:
+            score += 10
+        cf = solvency.get("cashflow_to_profit")
+        if cf is not None:
+            score += 6 if cf >= 0.8 else (3 if cf >= 0 else 0)
+        # 风险信号仅在数据完整时计分（空数据不算风控加分）
+        if finance is not None:
+            risk_hits = research_data.get("risk_signals") or []
+            score += 4 if not risk_hits else max(0, 4 - 2 * len(risk_hits))
+
+        return round(min(100.0, score), 1)
 
     # ------------------------------------------------------------------
     # 公司池批量决策
@@ -71,25 +137,71 @@ class InvestorAgent:
     def run_portfolio(
         self, pool_file: str, save: bool = False,
         output_dir: str = "reports/finance-report",
+        research_fn=None, sector: str = "",
     ) -> dict:
         """公司池批量选股与仓位配置
 
-        流程：加载公司池白名单 → 逐标的评分 → 风控约束分配权重
-        → 输出 Portfolio.json（空仓时输出 {} 并记录决策逻辑）
+        流程：加载公司池白名单 → 逐标的采集分析并评分（research_fn，
+        由编排器注入采集/分析流水线）→ 风控约束分配权重
+        → 格式校验 → 输出 Portfolio.json（空仓时输出 {} 并记录决策逻辑）
+
+        Args:
+            sector: 板块名（单板块批量打通）；非空时只对该板块
+                标的评分配置，空则全池。
         """
         from collectors.pool_loader import load_pool, whitelist_symbols
 
         pool = load_pool(pool_file)
         allowed = whitelist_symbols(pool)
+        if sector:
+            if sector not in pool:
+                raise ValueError(
+                    f"板块「{sector}」不在公司池内，可选: "
+                    f"{'、'.join(pool.keys())}")
+            pool = {sector: pool[sector]}
 
-        # TODO(Day 4): 逐标的调用编排流程产出研报结论并评分
+        # 逐标的评分：research_fn(symbol, name) -> research_data
         scores: dict = {}  # symbol -> score
+        if research_fn is not None:
+            for sector_items in pool.values():
+                for symbol, name in sector_items:
+                    try:
+                        data = research_fn(symbol, name)
+                        scores[symbol] = self.score_research(data)
+                    except Exception as e:  # noqa: BLE001 单标的失败不阻断批量
+                        scores[symbol] = 0.0
 
         portfolio = self._allocate(scores, allowed)
+
+        # 提交硬约束校验：代码在白名单内、权重合规
+        errors = self.validate_portfolio(portfolio, allowed)
+        if errors:
+            raise ValueError(f"Portfolio 校验失败: {errors}")
 
         if save:
             self._save(portfolio, output_dir, scores, self.decision_notes)
         return portfolio
+
+    def validate_portfolio(self, portfolio: dict, allowed: set) -> List[str]:
+        """Portfolio.json 格式校验（提交硬约束）
+
+        规则：代码须在公司池白名单内；单标权重 (0, max_weight]；
+        总权重 ≤ 1.0；空仓 {} 合法（须另附决策逻辑说明）。
+        返回问题清单，空列表为通过。
+        """
+        errors = []
+        total = 0.0
+        for symbol, weight in portfolio.items():
+            if symbol not in allowed:
+                errors.append(f"代码 {symbol} 不在公司池白名单内")
+            if not isinstance(weight, (int, float)) or not (
+                    0 < weight <= self.max_weight + 1e-9):
+                errors.append(
+                    f"{symbol} 权重 {weight} 超出 (0, {self.max_weight}] 区间")
+            total += weight if isinstance(weight, (int, float)) else 0.0
+        if total > 1.0 + 1e-9:
+            errors.append(f"总权重 {total:.2f} 超过 1.0")
+        return errors
 
     def _allocate(self, scores: dict, allowed: set) -> dict:
         """按评分分配仓位权重（风控约束硬校验）"""
@@ -120,10 +232,11 @@ class InvestorAgent:
             weight = min(self.max_weight, score / total_score)
             portfolio[symbol] = round(weight, 2)
 
-        # 3. 总权重约束（≤ 1.0）：等比缩放；round 逐项舍入的累计误差
-        #    可能使和 > 1.0（提交硬约束），由末位吸收残差保证不超限
+        # 3. 总权重约束（≤ 1.0）：round 逐项舍入的累计误差可能使
+        #    和 ≥ 1.0（如 8 只各 0.125 → 0.13×8 = 1.04，提交硬约束
+        #    超限），等比缩放 + 末位吸收残差保证不超限
         total = sum(portfolio.values())
-        if total > 1.0:
+        if total > 1.0 - 1e-9:
             portfolio = {
                 s: round(w / total, 2) for s, w in portfolio.items()
             }

@@ -39,6 +39,7 @@ class ReportResult:
     passed_review: bool = False
     review_notes: str = ""
     portfolio: dict = field(default_factory=dict)  # 投资决策结果（股票代码→仓位权重）
+    research_data: dict = field(default_factory=dict)  # 供 Investor 因子打分
 
 
 class ReportOrchestrator:
@@ -104,14 +105,45 @@ class ReportOrchestrator:
 
         # 阶段5：投资决策（选股评分 + 仓位配置，输出 Portfolio.json）
         if request.report_type == "company":
+            result.research_data = research_data
             result.portfolio = self.investor.decide(result)
 
         return result
 
-    def run_investment(self, pool_file: str, save: bool = False) -> dict:
-        """公司池批量投资决策：逐标的生成研报结论 → 评分 → 仓位配置"""
-        return self.investor.run_portfolio(pool_file, save=save,
-                                            output_dir=self.output_dir)
+    def run_investment(self, pool_file: str, save: bool = False,
+                       sector: str = "") -> dict:
+        """公司池批量投资决策：逐标的采集分析评分 → 仓位配置
+
+        支持单板块批量打通：sector 非空时只跑该板块（Day 4 验收：
+        对某个板块跑批量流程产出多份报告 + 组合配置）。
+        评分用因子规则（采集+分析即可，不走 LLM 研报生成，
+        批量耗时可控；入选标的另由 decide 单标流程产出研报）。
+        """
+        def _research(symbol: str, name: str) -> dict:
+            request = ReportRequest(
+                report_type="company", target=symbol, name=name)
+            plan = self.planner.plan(request)
+            return self.researcher.research(plan)
+
+        portfolio = self.investor.run_portfolio(
+            pool_file, save=save, output_dir=self.output_dir,
+            research_fn=_research, sector=sector)
+
+        # 入选标的产出完整研报（验收：批量流程产出多份报告 +
+        # 组合配置；采集/分析已缓存，仅补 LLM 撰写开销）
+        if save and portfolio:
+            from collectors.pool_loader import load_pool
+            pool = load_pool(pool_file)
+            name_map = {s: n for items in pool.values()
+                        for s, n in items}
+            for symbol in portfolio:
+                request = ReportRequest(
+                    report_type="company", target=symbol,
+                    name=name_map.get(symbol, ""))
+                result = self.generate(request)
+                if result.content:
+                    self.save_report(result, f"{symbol}.md")
+        return portfolio
 
     def save_report(self, result: ReportResult, filename: str) -> str:
         """保存研报为 Markdown（按报告类型分目录，个股按 股票代码.md 命名）"""
