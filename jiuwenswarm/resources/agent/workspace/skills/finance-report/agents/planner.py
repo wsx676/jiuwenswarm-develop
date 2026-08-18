@@ -47,12 +47,19 @@ class PlannerAgent:
             "sector": "",
             "competitors": [],
             "pool": {},
-            "collect_tasks": ["quote", "filing", "news"],
+            "collect_tasks": ["quote", "filing", "news", "rag"],
             "analyze_tasks": ["finance", "industry", "macro"],
         }
 
-        if request.report_type != "company":
-            return plan  # 行业/宏观研报（Day 4+ 扩展）
+        # Day 4：按研报类型拆解子任务（Researcher 按 collect_tasks 采集）
+        if request.report_type == "industry":
+            plan["collect_tasks"] = ["news", "rag"]
+            plan["analyze_tasks"] = ["industry", "macro"]
+            return plan
+        if request.report_type == "macro":
+            plan["collect_tasks"] = ["news", "rag"]
+            plan["analyze_tasks"] = ["macro"]
+            return plan
 
         # 公司研报：加载公司池做白名单校验与板块竞对提取
         try:
@@ -70,7 +77,8 @@ class PlannerAgent:
             plan["sector"] = find_sector(pool, request.target) or ""
             plan["competitors"] = [
                 s for s, _ in sector_peers(pool, request.target)]
-            plan["collect_tasks"].append("peer_filing")  # 竞对财报
+            if plan["competitors"]:
+                plan["collect_tasks"].append("peer_filing")  # 竞对财报
         except Exception as e:  # noqa: BLE001 池加载失败不阻断（降级无板块）
             logger.warning("公司池加载失败，行业分析降级: %s", e)
         return plan

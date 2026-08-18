@@ -313,6 +313,13 @@ class ReportWriter:
                        "区间涨跌幅%": quote.get("period_return"),
                        "指标期间": latest_period,
                        "盈利洞察": finance_dict.get("insights", [])[:3]}
+            # Day 4：RAG 知识注入——估值方法论文档片段作写作参考
+            # （方法论定性文字，非数据句，不替代可溯源估值数字）
+            kb_notes = [c.get("content", "")[:160]
+                        for c in (data.get("knowledge_chunks") or [])[:2]]
+            if kb_notes:
+                payload["估值方法参考（知识库，仅作方法论参考，"
+                       "数字须来自估值指标）"] = kb_notes
             # H2 回归：材料无估值指标时禁止 LLM 编造 PE 等数字
             if not valuation:
                 payload["估值约束"] = (
@@ -462,6 +469,9 @@ class ReportWriter:
                 seen.add(src)
                 sources.append(f"新闻资讯：{src}")
         sources.append("行业分组：组委会公司池（上市公司列表.xlsx）")
+        # Day 4：RAG 知识库参与写作时留痕（溯源闭环）
+        if data.get("knowledge_chunks"):
+            sources.append("估值与分析方法参考：财务方法论知识库（自沉淀方法论文档）")
         return sources
 
     def _build_claims(self, data, finance, industry) -> list:

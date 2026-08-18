@@ -5,9 +5,10 @@
 1. 按任务计划调度采集层：行情/财报/新闻（迭代式 Deep Research），
    落盘数据优先复用（reports/finance-report/data/ 缓存），缺失再实时采集
 2. 调度分析引擎：财务/宏观/行业（行业分析含同板块竞对财报横向对比）
-3. 生成图文同源图表（ChartGenerator：折线/柱状/财务表格）
-4. 整理论据卡片与来源清单（含引用来源），供 Writer/Reviewer 使用
-5. supplement：根据 Reviewer 反馈定向补采缺失数据（Day 4 扩展）
+3. 检索财务知识库（RAGRetriever：估值/分析框架方法论文档）
+4. 生成图文同源图表（ChartGenerator：折线/柱状/财务表格）
+5. 整理论据卡片与来源清单（含引用来源），供 Writer/Reviewer 使用
+6. supplement：按 Reviewer 反馈定向补采缺失数据（只补缺口不全量重采）
 """
 
 import json
@@ -32,47 +33,70 @@ class ResearcherAgent:
 
     # ------------------------------------------------------------------
     def research(self, plan: dict) -> dict:
-        """按任务计划执行数据采集、分析引擎调度与图表生成"""
+        """按任务计划执行数据采集、分析引擎调度与图表生成
+
+        Day 4：collect_tasks 计划驱动（Planner 拆解什么采什么），
+        RAG 检索知识片段与来源清单随研究结果一并返回。
+        """
         symbol = plan.get("target", "")
         name = plan.get("name", "")
+        tasks = plan.get("collect_tasks") or []
 
-        # 1. 采集三件套（缓存优先：落盘 JSON 复用，避免重复网络请求）
-        quote_data = self._collect(
-            "quote", symbol,
-            lambda: self._collect_quote(symbol, name))
-        filing_data = self._collect(
-            "filing", symbol, lambda: self._collect_filing(symbol))
-        news_data = self._collect(
-            "news", symbol, lambda: self._collect_news(name or symbol))
+        # 1. 按计划采集（缓存优先：落盘 JSON 复用，避免重复网络请求）
+        quote_data = (
+            self._collect("quote", symbol,
+                          lambda: self._collect_quote(symbol, name))
+            if "quote" in tasks else {})
+        filing_data = (
+            self._collect("filing", symbol,
+                          lambda: self._collect_filing(symbol))
+            if "filing" in tasks else {})
+        news_data = (
+            self._collect("news", symbol,
+                          lambda: self._collect_news(name or symbol))
+            if "news" in tasks else {})
 
-        # 2. 分析引擎：财务 / 宏观 / 行业（竞对财报横向对比）
+        # 2. RAG 检索：估值/分析方法论知识片段（注入 Writer 材料）
+        knowledge_chunks = []
+        if "rag" in tasks:
+            try:
+                knowledge_chunks = self._retrieve_knowledge(plan)
+            except Exception as e:  # noqa: BLE001 知识增强失败不阻断
+                logger.warning("RAG 检索失败，降级无知识增强: %s", e)
+
+        # 3. 分析引擎：按 analyze_tasks 门控（计划驱动，行业/宏观
+        #    研报不跑财务分析，避免无谓的引擎调用与网络请求）
+        analyze = plan.get("analyze_tasks") or []
         statements = self._to_statements(filing_data)
         finance_analysis = None
         industry_analysis = None
-        try:
-            from analyzers.finance_analyzer import FinanceAnalyzer
-            finance_analysis = FinanceAnalyzer().analyze(
-                statements, quote_data)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("财务分析失败: %s", e)
-        try:
-            from analyzers.industry_analyzer import IndustryAnalyzer
-            industry_analysis = IndustryAnalyzer().analyze(
-                symbol, plan.get("pool") or {}, news_data=news_data,
-                peer_metrics=self._peer_metrics(
-                    symbol, plan.get("competitors") or [],
-                    plan.get("pool") or {}),
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("行业分析失败: %s", e)
+        if "finance" in analyze:
+            try:
+                from analyzers.finance_analyzer import FinanceAnalyzer
+                finance_analysis = FinanceAnalyzer().analyze(
+                    statements, quote_data)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("财务分析失败: %s", e)
+        if "industry" in analyze:
+            try:
+                from analyzers.industry_analyzer import IndustryAnalyzer
+                industry_analysis = IndustryAnalyzer().analyze(
+                    symbol, plan.get("pool") or {}, news_data=news_data,
+                    peer_metrics=self._peer_metrics(
+                        symbol, plan.get("competitors") or [],
+                        plan.get("pool") or {}),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("行业分析失败: %s", e)
         macro_analysis = None
-        try:
-            from analyzers.macro_analyzer import MacroAnalyzer
-            macro_analysis = MacroAnalyzer().analyze(news_data)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("宏观分析失败: %s", e)
+        if "macro" in analyze:
+            try:
+                from analyzers.macro_analyzer import MacroAnalyzer
+                macro_analysis = MacroAnalyzer().analyze(news_data)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("宏观分析失败: %s", e)
 
-        # 3. 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
+        # 4. 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
         stmt_dicts = [s.to_dict() for s in statements]
         charts = []
         try:
@@ -91,14 +115,56 @@ class ResearcherAgent:
             "quote_data": quote_data,
             "filing_data": filing_data,
             "news_data": news_data,
-            "knowledge_chunks": [],
+            "knowledge_chunks": knowledge_chunks,
             "claims": [],
             "finance_analysis": finance_analysis,
             "industry_analysis": industry_analysis,
             "macro_analysis": macro_analysis,
             "charts": charts,
-            "citations": [],
+            "citations": self._build_citations(
+                quote_data, filing_data, news_data, knowledge_chunks),
         }
+
+    # ------------------------------------------------------------------
+    # RAG 知识检索
+    # ------------------------------------------------------------------
+    def _retrieve_knowledge(self, plan: dict) -> list:
+        """检索财务方法论知识库：按研报类型组合检索词取 top 片段
+
+        冷启动自动播种内置文档；调用方 research() 已包降级防护。
+        """
+        rtype = plan.get("report_type", "company")
+        query_map = {
+            "company": f"{plan.get('sector') or ''} 估值方法 财务分析框架",
+            "industry": f"{plan.get('target', '')} 行业研究框架 竞争格局",
+            "macro": "宏观经济分析 GDP CPI PMI 政策解读框架",
+        }
+        from collectors.rag_retriever import RAGRetriever
+        retriever = RAGRetriever(self.config)
+        retriever.ensure_kb()
+        return [c.to_dict() for c in retriever.retrieve(
+            query_map.get(rtype, query_map["company"]),
+            top_k=int(self.config.get("rag_top_k", 3)))]
+
+    @staticmethod
+    def _build_citations(quote: dict, filing: dict, news: dict,
+                         chunks: list) -> list:
+        """来源清单（溯源）：行情/财报/新闻源 + 新闻白名单源 + 知识库"""
+        cites = []
+        for label, d in (("行情数据", quote), ("财务数据", filing)):
+            if d.get("source"):
+                cites.append(f"{label}：{d['source']}")
+        seen = set()
+        for it in (news.get("items", []) or []):
+            src = it.get("source", "")
+            if src and src not in seen:
+                seen.add(src)
+                cites.append(f"新闻资讯：{src}")
+        for c in chunks:
+            tag = f"财务方法论知识库：{c.get('heading') or c.get('source')}"
+            if tag not in cites:
+                cites.append(tag)
+        return cites
 
     # ------------------------------------------------------------------
     # 采集调度（缓存优先）
@@ -188,6 +254,58 @@ class ResearcherAgent:
 
     # ------------------------------------------------------------------
     def supplement(self, research_data: dict, feedback: dict) -> dict:
-        """根据 Reviewer 反馈补充缺失数据（只补缺口，不全量重采）"""
-        # Day 4：解析 feedback["issues"]，定向补采后合并返回
-        return research_data
+        """按 Reviewer 反馈定向补采（只补缺口，不全量重采）
+
+        解析 feedback["issues"] 关键词 → 定向动作：
+        - 估值/市值缺口：重采行情（市值接口可能上次失败）并重跑财务分析
+        - 其余（引用率/结构/合规）属 Writer 职责，留痕不重复采集
+        补采动作写入 supplement_log（决策可复现）。
+        """
+        data = dict(research_data)
+        issues = (feedback or {}).get("issues", []) or []
+        log = list(data.get("supplement_log", []) or [])
+        if not issues:
+            data["supplement_log"] = log
+            return data
+
+        symbol = (data.get("quote_data") or {}).get("symbol", "")
+        name = (data.get("quote_data") or {}).get("name", "")
+        joined = "\n".join(str(i) for i in issues)
+
+        # 估值缺口：市值/股本缺失导致 PE 不可算 → 重采行情升级缓存
+        valuation_gap = (
+            ("估值" in joined or "市值" in joined)
+            and symbol and not (data.get("quote_data") or {}).get(
+                "market_cap"))
+        if valuation_gap:
+            try:
+                fresh = self._collect_quote(symbol, name)
+                if fresh.get("market_cap"):
+                    data["quote_data"] = fresh
+                    self._persist("quote", symbol, fresh)
+                    log.append(f"重采行情补齐市值: {symbol}")
+                    from analyzers.finance_analyzer import FinanceAnalyzer
+                    data["finance_analysis"] = FinanceAnalyzer().analyze(
+                        self._to_statements(data.get("filing_data") or {}),
+                        fresh)
+                else:
+                    log.append(f"重采行情仍无市值，估值维持降级: {symbol}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("补采行情失败: %s", e)
+                log.append(f"补采行情失败: {e}")
+        else:
+            log.append(
+                f"审查 {len(issues)} 项问题属生成侧（Writer 重写），"
+                f"无数据缺口不重采")
+        data["supplement_log"] = log
+        return data
+
+    def _persist(self, kind: str, symbol: str, data: dict) -> None:
+        """补采结果回写缓存（升级残缺落盘，与 _collect 同源）"""
+        try:
+            os.makedirs(self.data_dir, exist_ok=True)
+            with open(os.path.join(self.data_dir, f"{symbol}_{kind}.json"),
+                      "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except OSError as e:  # noqa: BLE001
+            logger.warning("补采落盘失败 %s: %s", symbol, e)
