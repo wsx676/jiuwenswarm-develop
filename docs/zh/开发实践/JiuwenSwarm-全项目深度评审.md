@@ -260,3 +260,22 @@ JiuwenSwarm 是一个**生产可用、工程化扎实、有清晰扩展面的多
 | 13 | L4"sudo 自动提权" | **确认存在但描述过重**——用的是 `sudo -n`（non-interactive）,不会挂起;风险是静默提权尝试而非交互劫持 | L4 保留,风险措辞弱化 |
 
 **复核结论**:初版 14 项中 2 项整项证伪、3 项部分证伪/改写、5 处统计误计、3 处误检"干净"、1 项从"待查"落定为"已解决"。v2 有效问题 13 项。教训:①grep 统计必须防 xargs 分批;②"未读到实现"的推测（M4 初版自认"未在文件中可见"）必须先实读再定级;③"会话无治理"这类否定性断言,证伪成本远低于证实,应优先搜索反例。
+
+---
+
+## 附 2：修复记录（2026-08-18）
+
+| # | 问题 | 处置 | 落地方式 |
+|---|---|---|---|
+| H1 | git 子进程无 timeout | ✅ 已修 | `_run_git_subprocess` 统一封装 `asyncio.wait_for`（默认 30s，`SKILLNET_GIT_TIMEOUT` 可调）+ 超时 kill；`_sync_marketplace_repos` 改 `asyncio.gather` 并发且单个失败隔离 |
+| H2/H3 | `_run_git` 宽异常吞错/三态不可区分 | ✅ 已修 | `TimeoutExpired` 单独 warning 留痕；环境类异常 debug、子进程/编码异常 warning；超时可经 `RUNTIME_GIT_TIMEOUT` 调整 |
+| M2 | `_SKILLNET_INSTALL_JOBS` 无上限 | ✅ 已修 | 容量上限 1000（`SKILLNET_MAX_INSTALL_JOBS`），写入统一走 `_set_install_job`，超限优先驱逐终态（done/failed）旧记录 |
+| M3 | `_safe_rmtree` 失败静默 | ✅ 已修 | 新增 `_rmtree_or_fail`：强装/重建路径删除失败即快速失败返回统一错误（`skills.common.errors.removeFailed`），不再继续 copytree 留部分目录 |
+| M4 | 截断丢尾部堆栈 | ✅ 已修 | `_truncate_team_tool_result_text` 改头 70% + 尾 30% + `...[truncated N chars]...` 标注 |
+| M5 | 缺降级端到端断言 | ✅ 早已存在 | `TestDegradedReportPassesReviewer::test_offline_degraded_draft_passes_review`（评审基线后 finance 测试已增至 212+） |
+| L4 | 自动 sudo 提权 | ✅ 已修 | 默认禁用，需 `OMNI_GATE_ALLOW_SUDO=1` 或交互终端确认；失败原因写入 `environment_status.json` 与报错文案；SKILL.md 同步更新 |
+| M1 | interface_deep.py 拆分 | ⏸ 留档 | 1.18 万行/293 方法的接口层拆分属高风险大重构，需专项排期 |
+| L1 | tests/unit 并入 unit_tests | ⏸ 留档 | 下季度目录治理一并处理 |
+| L2 | 宽异常项目级治理 | ⏸ 留档 | 需 pylint 规则 + AST checker 专项（298 文件） |
+
+回归测试：`tests/unit_tests/agentserver/test_review_fixes.py`（13 用例；框架层用例依赖 openjiuwen，仅 CI 环境执行，本机自动 skip）。

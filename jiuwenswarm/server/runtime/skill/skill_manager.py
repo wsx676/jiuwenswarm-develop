@@ -51,9 +51,16 @@ logger = logging.getLogger(__name__)
 
 _SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "60"))
 _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
+# H1 修复：git 子进程超时保护（无 timeout 时 unreachable 仓库/深历史大仓库
+# 会让 asyncio 任务无限挂起，连锁阻塞 marketplace 同步与 install 流程）
+_GIT_SUBPROCESS_TIMEOUT: float = float(os.environ.get("SKILLNET_GIT_TIMEOUT", "30"))
+# M2 修复：安装 job 表上限（失败/完成的 dead record 不再永久累积）
+_MAX_INSTALL_JOBS: int = int(os.environ.get("SKILLNET_MAX_INSTALL_JOBS", "1000"))
 # SkillNet 异步安装 job 必须跨 SkillManager 实例共享：skills.* 无状态 RPC 在
 # AgentManager 缓存未命中时会临时 new JiuWenSwarm()，install 与 install_status
 # 可能落到不同实例；若 job 仅存实例内存会误报「安装会话已过期」。
+# 边界：容量上限 _MAX_INSTALL_JOBS，超限时优先驱逐终态（done/failed）
+# 旧记录；写入统一走 _set_install_job，禁止直接下标赋值。
 _SKILLNET_INSTALL_JOBS: dict[str, dict[str, Any]] = {}
 _FREE_SEARCH_PROXY_URL_ENV = "FREE_SEARCH_PROXY_URL"
 _FREE_SEARCH_SSL_VERIFY_ENV = "FREE_SEARCH_SSL_VERIFY"
@@ -359,6 +366,22 @@ def _safe_rmtree(path: Path) -> bool:
     return False
 
 
+def _rmtree_or_fail(path: Path, what: str) -> dict | None:
+    """删除旧目录，失败时返回统一失败结果（M3 修复）。
+
+    此前调用方忽略 _safe_rmtree 的 False 返回继续 copytree，
+    会静默留下新旧混杂的部分目录；现在失败即快速失败并留痕。
+    """
+    if _safe_rmtree(path):
+        return None
+    logger.error("删除旧目录失败，中止%s: path=%s", what, path)
+    return {
+        "success": False,
+        "detail": f"删除旧目录失败: {path}",
+        "detail_key": "skills.common.errors.removeFailed",
+    }
+
+
 def _handle_copy_error(exc: OSError, dest: Path, logger_prefix: str, src: Path | None = None) -> dict[str, Any]:
     """处理文件/目录复制失败的统一错误处理函数.
     
@@ -449,6 +472,23 @@ class SkillManager:
     def _skillnet_install_jobs(self) -> dict[str, dict[str, Any]]:
         """进程级共享的 SkillNet 安装任务表（见模块常量 ``_SKILLNET_INSTALL_JOBS``）."""
         return _SKILLNET_INSTALL_JOBS
+
+    def _set_install_job(self, install_id: str, entry: dict[str, Any]) -> None:
+        """写入安装 job，超限驱逐终态旧记录（M2 修复）。
+
+        失败/完成的 job 不能立即删除（客户端还会轮询一次 install_status
+        取错误详情），故以容量上限 + 优先驱逐终态旧记录控制增长。
+        """
+        jobs = _SKILLNET_INSTALL_JOBS
+        jobs[install_id] = entry
+        while len(jobs) > _MAX_INSTALL_JOBS:
+            terminal = next(
+                (k for k, v in jobs.items()
+                 if v.get("status") in ("done", "failed")),
+                None,
+            )
+            oldest = terminal if terminal is not None else next(iter(jobs))
+            del jobs[oldest]
 
     def set_skillnet_install_complete_hook(self, hook: Callable[[], Awaitable[None]] | None) -> None:
         """安装成功落盘后回调（通常为重载 Agent 实例）."""
@@ -884,7 +924,9 @@ class SkillManager:
         if dest.exists():
             if not force:
                 return {"success": False, "detail": f"skill {plugin_name} 已存在"}
-            _safe_rmtree(dest)
+            err = _rmtree_or_fail(dest, "plugin 强装")
+            if err:
+                return err
         shutil.copytree(plugin_src, dest)
 
         # 解析元数据并记录（添加 installed_at 时间戳）
@@ -1261,7 +1303,9 @@ class SkillManager:
                 mirror_url = ms
 
         install_id = uuid.uuid4().hex
-        self._skillnet_install_jobs[install_id] = {"status": "pending"}
+        # M2 修复：统一走 _set_install_job（超限时驱逐终态旧记录）；
+        # 后续 failed/done 写入均为同 id 更新，不再增长容量。
+        self._set_install_job(install_id, {"status": "pending"})
         asyncio.create_task(
             self._skillnet_install_background(install_id, skill_url, force, mirror_url),
             name=f"skillnet_install_{install_id[:8]}",
@@ -1533,7 +1577,9 @@ class SkillManager:
                                 "detail": f"技能 {slug} 已安装",
                                 "detail_key": "skills.clawhub.errors.skillAlreadyInstalled",
                             }
-                        _safe_rmtree(dest)
+                        err = _rmtree_or_fail(dest, "技能强装")
+                        if err:
+                            return err
 
                     # 复制到 skills 目录
                     shutil.copytree(skill_dir, dest)
@@ -1542,7 +1588,9 @@ class SkillManager:
                         if mirror_dest.exists():
                             if not force:
                                 continue
-                            _safe_rmtree(mirror_dest)
+                            err = _rmtree_or_fail(mirror_dest, "技能镜像强装")
+                            if err:
+                                return err
                         mirror_root.mkdir(parents=True, exist_ok=True)
                         shutil.copytree(skill_dir, mirror_dest)
 
@@ -1670,7 +1718,9 @@ class SkillManager:
                 if any(target_dir.iterdir()):
                     if not force:
                         return {"success": False, "detail": f"目标目录非空: {target_dir}"}
-                    _safe_rmtree(target_dir)
+                    err = _rmtree_or_fail(target_dir, "技能重建")
+                    if err:
+                        return err
             target_dir.mkdir(parents=True, exist_ok=True)
             skill_file = target_dir / "SKILL.md"
             if skill_file.exists() and not force:
@@ -1964,7 +2014,9 @@ class SkillManager:
                 if dest.exists():
                     if not force:
                         return {"success": False, "detail": f"技能 {skill_name} 已安装"}
-                    _safe_rmtree(dest)
+                    err = _rmtree_or_fail(dest, "技能强装")
+                    if err:
+                        return err
 
                 shutil.copytree(skill_dir, dest)
                 if use_custom_output:
@@ -1982,7 +2034,9 @@ class SkillManager:
                     if mirror_dest.exists():
                         if not force:
                             continue
-                        _safe_rmtree(mirror_dest)
+                        err = _rmtree_or_fail(mirror_dest, "技能镜像强装")
+                        if err:
+                            return err
                     mirror_root.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(skill_dir, mirror_dest)
 
@@ -2245,7 +2299,9 @@ class SkillManager:
                             "detail": "该技能已安装。",
                             "detail_key": "skills.skillNet.errors.skillAlreadyInstalled",
                         }
-                    _safe_rmtree(dest)
+                    err = _rmtree_or_fail(dest, "技能强装")
+                    if err:
+                        return {"ok": False, "detail": err["detail"], "detail_key": err["detail_key"]}
 
                 shutil.copytree(skill_dir, dest)
                 for mirror_root in self._get_mirror_skills_dirs():
@@ -2253,7 +2309,9 @@ class SkillManager:
                     if mirror_dest.exists():
                         if not force:
                             continue
-                        _safe_rmtree(mirror_dest)
+                        err = _rmtree_or_fail(mirror_dest, "技能镜像强装")
+                        if err:
+                            return {"ok": False, "detail": err["detail"], "detail_key": err["detail_key"]}
                     mirror_root.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(skill_dir, mirror_dest)
                 _safe_rmtree(skill_dir)
@@ -2418,7 +2476,9 @@ class SkillManager:
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
-                _safe_rmtree(dest)
+                err = _rmtree_or_fail(dest, "本地导入强装")
+                if err:
+                    return err
             try:
                 dest.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest / src.name)
@@ -3830,87 +3890,101 @@ class SkillManager:
             raise SkillNetEmptyDownloadError(github_context=ctx)
         return str(local_path)
 
+    async def _run_git_subprocess(
+        self, args: list[str], op: str
+    ) -> tuple[int, str, str] | None:
+        """带超时保护的 git 子进程执行（H1 修复）。
+
+        返回 (returncode, stdout, stderr)；超时/启动失败返回 None
+        （此前无 timeout，unreachable 仓库会让任务无限挂起）。
+        """
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=_GIT_SUBPROCESS_TIMEOUT
+            )
+            return (
+                proc.returncode if proc.returncode is not None else -1,
+                stdout.decode(errors="replace"),
+                stderr.decode(errors="replace"),
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "git %s 超时（>%.0fs），跳过本次操作", op, _GIT_SUBPROCESS_TIMEOUT
+            )
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:  # noqa: BLE001 进程可能已退出
+                    pass
+            return None
+        except Exception as exc:
+            logger.warning("git %s 异常: %s", op, exc)
+            return None
+
     async def _git_clone(self, url: str, dest: Path) -> str | None:
         """浅克隆 git 仓库，返回 commit hash 或 None."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                url,
-                str(dest),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.error("git clone 失败: %s", stderr.decode(errors="replace"))
-                return None
-            return await self._git_get_commit(dest)
-        except Exception as exc:
-            logger.error("git clone 异常: %s", exc)
+        result = await self._run_git_subprocess(
+            ["clone", "--depth", "1", url, str(dest)], "clone"
+        )
+        if result is None:
             return None
+        returncode, _, stderr = result
+        if returncode != 0:
+            logger.error("git clone 失败: %s", stderr)
+            return None
+        return await self._git_get_commit(dest)
 
     async def _git_pull(self, repo_path: Path) -> str | None:
         """拉取最新代码，返回 commit hash 或 None."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "-C",
-                str(repo_path),
-                "pull",
-                "--ff-only",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.warning("git pull 失败: %s", stderr.decode(errors="replace"))
-                return None
-            return await self._git_get_commit(repo_path)
-        except Exception as exc:
-            logger.warning("git pull 异常: %s", exc)
+        result = await self._run_git_subprocess(
+            ["-C", str(repo_path), "pull", "--ff-only"], "pull"
+        )
+        if result is None:
             return None
+        returncode, _, stderr = result
+        if returncode != 0:
+            logger.warning("git pull 失败: %s", stderr)
+            return None
+        return await self._git_get_commit(repo_path)
 
     async def _git_get_commit(self, repo_path: Path) -> str | None:
         """获取当前 HEAD commit hash."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "-C",
-                str(repo_path),
-                "rev-parse",
-                "HEAD",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            if proc.returncode != 0:
-                return None
-            return stdout.decode().strip()
-        except Exception:
+        result = await self._run_git_subprocess(
+            ["-C", str(repo_path), "rev-parse", "HEAD"], "rev-parse"
+        )
+        if result is None:
             return None
+        returncode, stdout, _ = result
+        if returncode != 0:
+            return None
+        return stdout.strip()
 
     async def _sync_marketplace_repos(self) -> None:
-        """同步所有已配置 marketplace 到本地目录（存在则 pull，不存在则 clone）."""
+        """同步所有已配置 marketplace 到本地目录（存在则 pull，不存在则 clone）。
+
+        H1 修复：并发同步（此前串行遍历，单个 marketplace 慢/挂死会
+        线性阻塞后续全部）；单个失败独立处理不互相影响。
+        """
         marketplaces = [m for m in self._get_marketplaces() if bool(m.get("enabled", True))]
         if not marketplaces:
             return
 
         self._marketplace_dir.mkdir(parents=True, exist_ok=True)
 
-        for marketplace in marketplaces:
-            name = marketplace.get("name", "")
-            url = marketplace.get("url", "")
-            if not name or not url:
-                continue
+        async def _sync_one(name: str, url: str) -> None:
             try:
                 repo_dir = _safe_child_path(self._marketplace_dir, name, "marketplace")
             except ValueError as exc:
                 _log_rejected_name("skills.marketplace.sync", "marketplace", name, exc)
-                continue
+                return
             try:
                 if repo_dir.exists():
                     await self._git_pull(repo_dir)
@@ -3922,6 +3996,23 @@ class SkillManager:
                     name,
                     url,
                     exc,
+                )
+
+        valid = [
+            (m.get("name", ""), m.get("url", ""))
+            for m in marketplaces
+            if m.get("name", "") and m.get("url", "")
+        ]
+        if not valid:
+            return
+        results = await asyncio.gather(
+            *[_sync_one(name, url) for name, url in valid],
+            return_exceptions=True,
+        )
+        for (name, url), res in zip(valid, results):
+            if isinstance(res, Exception):
+                logger.warning(
+                    "同步 marketplace 异常: name=%s url=%s error=%s", name, url, res
                 )
 
     # -----------------------------------------------------------------------

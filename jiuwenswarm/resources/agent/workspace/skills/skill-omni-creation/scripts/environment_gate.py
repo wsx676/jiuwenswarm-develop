@@ -302,22 +302,65 @@ def _has_noninteractive_admin() -> bool:
     return result.returncode == 0
 
 
-def _install_linux_system_deps() -> bool:
+# L4 修复：自动 sudo 提权默认禁用，需显式 opt-in
+# （企业 IDS/IPS 会把静默 sudo 调用标记为可疑行为）
+_SUDO_OPT_IN_ENV = "OMNI_GATE_ALLOW_SUDO"
+
+
+def _sudo_auto_allowed() -> tuple[bool, str]:
+    """判断是否允许自动 sudo 提权（L4 修复）。
+
+    允许条件：环境变量 ``OMNI_GATE_ALLOW_SUDO=1/true/yes``，或交互终端
+    下用户确认 y；其余情况拒绝并给出手动执行指引。
+    """
+    allow = os.environ.get(_SUDO_OPT_IN_ENV, "").strip().lower()
+    if allow in ("1", "true", "yes"):
+        return True, ""
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, ValueError, OSError):
+        interactive = False
+    if interactive:
+        try:
+            answer = input(
+                "Chromium 系统依赖缺失，需要 sudo 提权安装，是否允许？[y/N] "
+            ).strip().lower()
+            if answer in ("y", "yes"):
+                return True, ""
+            return False, "用户未确认 sudo 提权，已跳过自动安装系统依赖"
+        except (EOFError, OSError):
+            pass
+    return False, (
+        f"自动 sudo 提权默认禁用（设置 {_SUDO_OPT_IN_ENV}=1 允许，"
+        "或手动执行 'sudo python -m playwright install-deps chromium' 后重试）"
+    )
+
+
+def _install_linux_system_deps() -> tuple[bool, str]:
+    """返回 (是否安装成功, 未安装原因)；原因会写入 environment_status.json。"""
     distro, like = _linux_distribution()
     debian_like = distro in {"debian", "ubuntu", "linuxmint", "pop"} or "debian" in like or "ubuntu" in like
-    if not debian_like or not _has_noninteractive_admin():
-        return False
+    if not debian_like:
+        return False, f"非 Debian/Ubuntu 系发行版（{distro or 'unknown'}），不自动安装系统依赖"
+    if not _has_noninteractive_admin():
+        return False, "无 root 且无免密 sudo，无法自动安装系统依赖"
 
     command = [sys.executable, "-m", "playwright", "install-deps", "chromium"]
     if hasattr(os, "geteuid") and os.geteuid() != 0:
+        allowed, reason = _sudo_auto_allowed()
+        if not allowed:
+            _log(f"跳过自动安装系统依赖: {reason}")
+            return False, reason
         command = [shutil.which("sudo") or "sudo", "-n", *command]
     env = os.environ.copy()
     env["DEBIAN_FRONTEND"] = "noninteractive"
     try:
         result = _run(command, timeout=900, env=env)
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True, ""
+        return False, f"系统依赖安装命令退出码 {result.returncode}"
     except subprocess.TimeoutExpired:
-        return False
+        return False, "系统依赖安装超时（>900s）"
 
 
 def _ensure_chromium() -> None:
@@ -339,18 +382,25 @@ def _ensure_chromium() -> None:
     if error is None:
         return
 
-    if sys.platform.startswith("linux") and _install_linux_system_deps():
-        error = _chromium_launch_error()
-        if error is None:
-            return
+    deps_skip_reason = ""
+    if sys.platform.startswith("linux"):
+        deps_ok, deps_skip_reason = _install_linux_system_deps()
+        if deps_ok:
+            error = _chromium_launch_error()
+            if error is None:
+                return
 
     if sys.platform.startswith("linux"):
         distro, like = _linux_distribution()
         raise EnvironmentGateError(
             "Chromium was downloaded but cannot start because Linux system libraries are missing. "
             f"Detected distribution: {distro or 'unknown'} ({like or 'no ID_LIKE'}). "
-            "Automatic OS-package installation is only attempted on Debian/Ubuntu-like systems "
-            "when root or passwordless sudo is available. Run this interpreter with "
+            + (
+                f"System dependencies were not auto-installed: {deps_skip_reason}. "
+                if deps_skip_reason
+                else ""
+            )
+            + "Run this interpreter with "
             "'-m playwright install-deps chromium' using suitable privileges, then retry. "
             f"Launch error: {error}"
         )

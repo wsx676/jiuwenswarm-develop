@@ -981,6 +981,9 @@ async def ensure_persistent_checkpointer() -> None:
             lock.release()
 
 
+# H3 修复：runtime_state 的 git 探测超时可配置（大仓库/CI 下 5s 可能不够）
+_RUNTIME_GIT_TIMEOUT_SEC: float = float(os.environ.get("RUNTIME_GIT_TIMEOUT", "5"))
+
 _MODE_DISPLAY_MAP: dict[str, dict[str, str]] = {
     "agent": {"cn": "智能体模式", "en": "Agent Mode"},
     # Web 的 work 单 agent 计划模式（mode=agent.plan + work_mode=work）。
@@ -2159,13 +2162,28 @@ class JiuWenSwarmDeepAdapter:
             if git_bin and project_dir and os.path.isdir(project_dir):
 
                 def _run_git(args: list[str]) -> str:
-                    result = subprocess.run(
-                        [git_bin, *args],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        cwd=project_dir,
-                    )
+                    # H3 修复：TimeoutExpired 单独处理并留痕（此前被外层
+                    # 宽异常吞掉，超时/未启用/非仓库三态无法区分）
+                    try:
+                        result = subprocess.run(
+                            [git_bin, *args],
+                            capture_output=True,
+                            text=True,
+                            timeout=_RUNTIME_GIT_TIMEOUT_SEC,
+                            cwd=project_dir,
+                        )
+                    except subprocess.TimeoutExpired:
+                        logger.warning(
+                            "[runtime_state] git %s 超时（>%.0fs）: %s",
+                            args[0] if args else "?",
+                            _RUNTIME_GIT_TIMEOUT_SEC,
+                            project_dir,
+                        )
+                        return ""
+                    except (FileNotFoundError, PermissionError, OSError) as exc:
+                        # 环境类问题（cwd 被删/权限）可静默，debug 留痕
+                        logger.debug("[runtime_state] git 不可用: %s", exc)
+                        return ""
                     return result.stdout.strip() if result.returncode == 0 else ""
 
                 try:
@@ -2182,8 +2200,14 @@ class JiuWenSwarmDeepAdapter:
                         git_branch = snapshot.branch
                         git_status = snapshot.status
                         git_recent_commits = snapshot.recent_commits
-                except Exception:
-                    pass
+                except (FileNotFoundError, PermissionError) as exc:
+                    # H2 修复：环境问题（目录不可读等）降级 N/A 可接受，留 debug 痕
+                    logger.debug("[runtime_state] git 环境异常: %s", exc)
+                except (subprocess.SubprocessError, UnicodeDecodeError, ValueError) as exc:
+                    # H2 修复：子进程/编码类异常大概率是代码 bug，必须 warning 可观测
+                    logger.warning("[runtime_state] git 探测异常: %s", exc)
+                except Exception as exc:  # noqa: BLE001 兜底但不再静默
+                    logger.warning("[runtime_state] git 探测未预期失败: %s", exc)
 
             mode_display = _MODE_DISPLAY_MAP.get(mode, {}).get(language, mode)
 

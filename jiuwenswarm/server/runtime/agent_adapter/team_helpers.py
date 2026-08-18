@@ -1298,6 +1298,17 @@ def _enrich_teammate_event(parsed: dict[str, Any], chunk: Any) -> dict[str, Any]
 
 
 _TEAM_TOOL_RESULT_TEXT_LIMIT = 512
+# M4 修复：头尾保留比例（异常堆栈/FAILED 等根因信号通常在输出尾部，
+# 此前 value[:LIMIT] 只保头部会把尾部堆栈切掉）
+_TEAM_TOOL_RESULT_HEAD_RATIO = 0.7
+
+
+def _truncate_team_tool_result_text(value: str, limit: int) -> str:
+    """头尾各保留一段并标注省略量（M4 修复）。"""
+    head = max(1, int(limit * _TEAM_TOOL_RESULT_HEAD_RATIO))
+    tail = max(1, limit - head)
+    omitted = len(value) - head - tail
+    return f"{value[:head]}\n...[truncated {omitted} chars]...\n{value[-tail:]}"
 
 
 def _truncate_team_tool_result_event(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -1315,7 +1326,9 @@ def _truncate_team_tool_result_event(parsed: dict[str, Any]) -> dict[str, Any]:
         original_size += len(value)
         if len(value) <= _TEAM_TOOL_RESULT_TEXT_LIMIT:
             continue
-        next_event[key] = value[:_TEAM_TOOL_RESULT_TEXT_LIMIT]
+        next_event[key] = _truncate_team_tool_result_text(
+            value, _TEAM_TOOL_RESULT_TEXT_LIMIT
+        )
         truncated = True
 
     if truncated:

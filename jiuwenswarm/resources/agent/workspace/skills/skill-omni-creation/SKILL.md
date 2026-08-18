@@ -38,7 +38,7 @@ description: "当用户说「从这个链接/URL生成skill」「把这个网页
 2. 若选中的解释器不是当前解释器，自动使用该解释器重新执行当前脚本。
 3. 自动安装当前 profile 缺失的 Python 包：`beautifulsoup4`、`requests`、`Pillow`、`playwright`。
 4. 网页 profile 自动安装并真实启动一次 Playwright Chromium。
-5. Debian/Ubuntu 类 Linux 在具备 root 或免密 sudo 时自动补齐 Chromium 系统库；其他 Linux 或无提权权限时返回非零并输出所需修复命令。
+5. Debian/Ubuntu 类 Linux 在具备 root 时自动补齐 Chromium 系统库；非 root 场景下自动 sudo 提权默认禁用，需设置 `OMNI_GATE_ALLOW_SUDO=1` 或在交互终端确认后才会执行；其他 Linux、无提权权限或未确认时返回非零并输出所需修复命令。
 6. 自动修复仍失败时输出 `ENVIRONMENT_BLOCKED`、写入 `scripts/work/environment_status.json` 并立即停止；不得转入网页降级、图片审核、`save_images.py --keep` 或最终化。
 
 `scrape_page.py`、`prepare_images.py`、`download_images.py`、`print_blocks.py`、`image_review.py` 和 `save_images.py` 都会自动调用同一门禁，因此正常流程无需手工运行 `--check-deps`。
