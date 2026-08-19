@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """命令行入口脚本
 
-支持四类任务：
+支持六类任务：
 - company  : 生成公司研报（输出 {股票代码}.md）
 - industry : 生成行业研报
 - macro    : 生成宏观研报
 - invest   : 投资决策（公司池选股 + 仓位配置，输出 Portfolio.json）
+- pool     : 校验公司池并枚举板块/标的清单（Swarmflow 选股阶段）
+- research : 公司池采集/分析两阶段（Swarmflow 采集/分析阶段）
 
 用法示例：
     python run_report.py company --target 600519 --name 贵州茅台 --save
@@ -13,6 +15,9 @@
     python run_report.py macro --period 2026Q2 --save
     python run_report.py invest --pool-file example/上市公司列表.xlsx --save
     python run_report.py invest --pool-file example/上市公司列表.xlsx --sector 消费 --save
+    python run_report.py pool
+    python run_report.py research --stage collect
+    python run_report.py research --stage analyze --save
 """
 
 import argparse
@@ -21,9 +26,37 @@ import os
 import sys
 
 from orchestrator import ReportOrchestrator, ReportRequest
+from agents.planner import DEFAULT_POOL_FILE
+from common.telemetry import RUN_STATS
 
 # 默认输出目录（提交格式对齐：个股投资研报/股票代码.md + Portfolio.json）
 DEFAULT_OUTPUT_DIR = os.path.join("reports", "finance-report")
+
+# 项目根（与 researcher.DEFAULT_DATA_DIR / planner.DEFAULT_POOL_FILE 同口径：
+# 技能目录向上 6 层），保证任何 cwd 下产物都落项目根 reports/
+_SKILL_ROOT = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_SKILL_ROOT, *[".."] * 6))
+
+
+def resolve_output_dir(path) -> str:
+    """输出目录解析：显式 --output-dir 优先；缺省锚定项目根
+    （技能根目录执行时 reports/ 相对路径会误落技能内，与 data/
+    缓存目录口径不一致）
+    """
+    if path:
+        return path
+    return os.path.join(_PROJECT_ROOT, *DEFAULT_OUTPUT_DIR.split(os.sep))
+
+
+def resolve_pool_file(path: str) -> str:
+    """公司池路径解析：显式路径存在则用之；否则回退项目根默认池
+    （技能根目录执行时 example/ 相对路径不存在，避免 FileNotFoundError）
+    """
+    if path and os.path.exists(path):
+        return path
+    if path and path != DEFAULT_POOL_FILE:
+        print(f"警告: 公司池文件不存在 {path}，回退默认池")
+    return DEFAULT_POOL_FILE
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,6 +94,36 @@ def parse_args() -> argparse.Namespace:
         "--sector", default="",
         help="板块名（单板块批量打通，如 消费）；缺省全池")
     p_invest.add_argument("--save", action="store_true")
+    p_invest.add_argument(
+        "--skip-reports", action="store_true",
+        help="只做评分与仓位配置，不为入选标的生成研报"
+             "（Swarmflow 决策阶段用，报告由报告阶段单独驱动）")
+    p_invest.add_argument(
+        "--use-cached-scores", action="store_true",
+        help="复用分析阶段评分缓存 decision_log/scores_cache.json"
+             "（阶段间状态传递，缺失时回退实时采集分析）")
+    p_invest.add_argument(
+        "--max-positions", type=int, default=0,
+        help="最大持仓标的数（达标标的过多时按评分取前 N，"
+             "依据回写决策日志；0=不限制）")
+
+    p_pool = sub.add_parser("pool", help="校验公司池并枚举板块/标的清单")
+    p_pool.add_argument(
+        "--pool-file", default=argparse.SUPPRESS,
+        help="公司池列表 xlsx 路径（缺省 example/上市公司列表.xlsx）")
+
+    p_research = _with_output_dir(sub.add_parser(
+        "research", help="公司池采集/分析两阶段（Swarmflow 工作流用）"))
+    p_research.add_argument(
+        "--pool-file", default=argparse.SUPPRESS,
+        help="公司池列表 xlsx 路径（缺省 example/上市公司列表.xlsx）")
+    p_research.add_argument(
+        "--stage", required=True, choices=["collect", "analyze"],
+        help="collect=仅采集落盘（缓存优先）；analyze=读缓存分析并因子打分")
+    p_research.add_argument("--sector", default="", help="板块名；缺省全池")
+    p_research.add_argument(
+        "--save", action="store_true",
+        help="analyze 阶段落盘评分缓存 scores_cache.json")
 
     parser.add_argument(
         "--output-dir", default=argparse.SUPPRESS, help="输出目录"
@@ -70,9 +133,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    # 两层均未显式传 --output-dir 时才用默认目录（SUPPRESS 不写 namespace）
-    output_dir = getattr(args, "output_dir", DEFAULT_OUTPUT_DIR)
-    orchestrator = ReportOrchestrator({"output_dir": output_dir})
+    # 两层均未显式传 --output-dir 时用默认目录（SUPPRESS 不写 namespace）；
+    # 缺省锚定项目根，避免技能根目录执行时产物误落技能内
+    output_dir = resolve_output_dir(getattr(args, "output_dir", None))
+    config = {"output_dir": output_dir}
+    max_positions = getattr(args, "max_positions", 0)
+    if max_positions:
+        config["investor"] = {"max_positions": max_positions}
+    orchestrator = ReportOrchestrator(config)
 
     if args.task == "company":
         request = ReportRequest(
@@ -104,9 +172,53 @@ def main() -> int:
             print(f"宏观研报已保存: {path}")
 
     elif args.task == "invest":
+        pool_file = resolve_pool_file(args.pool_file)
+        scores = None
+        if getattr(args, "use_cached_scores", False):
+            cache_path = os.path.join(
+                output_dir, "decision_log", "scores_cache.json")
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, encoding="utf-8") as f:
+                        scores = json.load(f).get("scores")
+                    print(f"复用分析阶段评分缓存: {cache_path}")
+                except (OSError, json.JSONDecodeError) as e:
+                    print(f"评分缓存读取失败，回退实时采集分析: {e}")
+            else:
+                print("未找到评分缓存，回退实时采集分析")
         portfolio = orchestrator.run_investment(
-            args.pool_file, save=args.save, sector=args.sector)
+            pool_file, save=args.save, sector=args.sector,
+            reports=not args.skip_reports, scores=scores)
         print(json.dumps(portfolio, ensure_ascii=False, indent=2))
+
+    elif args.task == "pool":
+        pool_file = resolve_pool_file(
+            getattr(args, "pool_file", DEFAULT_POOL_FILE))
+        from collectors.pool_loader import load_pool
+        pool = load_pool(pool_file)
+        print(json.dumps({
+            "pool_file": pool_file,
+            "sectors": list(pool.keys()),
+            "symbols": {s: [c for c, _ in items]
+                        for s, items in pool.items()},
+            "total": sum(len(items) for items in pool.values()),
+        }, ensure_ascii=False, indent=2))
+
+    elif args.task == "research":
+        pool_file = resolve_pool_file(
+            getattr(args, "pool_file", DEFAULT_POOL_FILE))
+        if args.stage == "collect":
+            result = orchestrator.collect_pool(pool_file, args.sector)
+        else:
+            result = orchestrator.score_pool(
+                pool_file, args.sector, save=args.save)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    # Day 5 资源消耗记录：--save 运行时落盘 run_stats.json
+    # （各阶段耗时 + LLM token 消耗 + 失败留痕 + 随机种子）
+    if getattr(args, "save", False):
+        stats_path = RUN_STATS.save(output_dir)
+        print(f"运行统计已保存: {stats_path}")
 
     return 0
 

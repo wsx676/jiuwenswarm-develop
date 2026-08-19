@@ -7,6 +7,7 @@
 """
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,6 +17,13 @@ from agents.researcher import ResearcherAgent
 from agents.writer import WriterAgent
 from agents.reviewer import ReviewerAgent
 from agents.investor import InvestorAgent
+from common.telemetry import RUN_STATS, fix_random_seed
+
+logger = logging.getLogger(__name__)
+
+# 成果可复现：进程启动即固定随机种子（全流程为确定性规则，
+# 种子写入 run_stats.json，第三方按 README 可重放决策）
+fix_random_seed()
 
 
 @dataclass
@@ -62,62 +70,156 @@ class ReportOrchestrator:
         self.investor = InvestorAgent(config)
 
     def generate(self, request: ReportRequest) -> ReportResult:
-        """端到端生成研报"""
+        """端到端生成研报（各阶段耗时经遥测落盘，可复现可追溯）"""
         result = ReportResult(
             report_type=request.report_type, target=request.target
         )
 
         # 阶段1：任务规划（链式推理起点）
-        plan = self.planner.plan(request)
+        with RUN_STATS.time_phase(f"规划:{request.target}"):
+            plan = self.planner.plan(request)
 
         # 阶段2：数据研究
-        research_data = self.researcher.research(plan)
+        with RUN_STATS.time_phase(f"研究:{request.target}"):
+            research_data = self.researcher.research(plan)
 
         # 阶段3 + 4：撰写 + 审查（自检反馈循环：回流重写 ≤ 2 轮）
-        revision_feedback = None
-        for round_idx in range(request.max_revision_rounds + 1):
-            # 撰写报告（修订轮带上一轮审查反馈定向收敛）
-            draft = self.writer.write(
-                research_data, request,
-                revision_feedback=revision_feedback)
+        with RUN_STATS.time_phase(f"撰写审查:{request.target}"):
+            revision_feedback = None
+            for round_idx in range(request.max_revision_rounds + 1):
+                # 撰写报告（修订轮带上一轮审查反馈定向收敛）
+                draft = self.writer.write(
+                    research_data, request,
+                    revision_feedback=revision_feedback)
 
-            # 审查校验
-            review = self.reviewer.review(draft, research_data)
+                # 审查校验
+                review = self.reviewer.review(draft, research_data)
 
-            result.content = draft.content
-            result.charts = draft.charts
-            result.citations = draft.citations
-            result.passed_review = review.passed
-            result.review_notes = review.notes
+                result.content = draft.content
+                result.charts = draft.charts
+                result.citations = draft.citations
+                result.passed_review = review.passed
+                result.review_notes = review.notes
 
-            if review.passed:
-                break
+                if review.passed:
+                    break
 
-            # 未通过：定向补采数据缺口 + 问题清单回流 Writer 重写；
-            # 2 轮未过则以当前稿放行并留痕（不阻断交付）
-            if round_idx < request.max_revision_rounds:
-                research_data = self.researcher.supplement(
-                    research_data, review.feedback
-                )
-                revision_feedback = review.feedback
-            else:
-                result.review_notes += "；已达最大修订轮次，按当前稿放行"
+                # 未通过：定向补采数据缺口 + 问题清单回流 Writer 重写；
+                # 2 轮未过则以当前稿放行并留痕（不阻断交付）
+                if round_idx < request.max_revision_rounds:
+                    research_data = self.researcher.supplement(
+                        research_data, review.feedback
+                    )
+                    revision_feedback = review.feedback
+                else:
+                    result.review_notes += "；已达最大修订轮次，按当前稿放行"
 
         # 阶段5：投资决策（选股评分 + 仓位配置，输出 Portfolio.json）
         if request.report_type == "company":
-            result.research_data = research_data
-            result.portfolio = self.investor.decide(result)
+            with RUN_STATS.time_phase(f"决策:{request.target}"):
+                result.research_data = research_data
+                result.portfolio = self.investor.decide(result)
 
         return result
 
+    # ------------------------------------------------------------------
+    # Swarmflow 五阶段工作流的分阶段入口（选股→采集→分析→决策→报告）
+    # ------------------------------------------------------------------
+    def _filtered_pool(self, pool_file: str, sector: str) -> dict:
+        """加载公司池并按板块过滤（板块名非法时抛出供上层留痕）"""
+        from collectors.pool_loader import load_pool
+        pool = load_pool(pool_file)
+        if sector:
+            if sector not in pool:
+                raise ValueError(
+                    f"板块「{sector}」不在公司池内，可选: "
+                    f"{'、'.join(pool.keys())}")
+            pool = {sector: pool[sector]}
+        return pool
+
+    def collect_pool(self, pool_file: str, sector: str = "") -> dict:
+        """「采集」阶段：按板块逐标的拉取数据（缓存优先，断点续采）
+
+        Day 5 批量容错：单标的失败自动重试一次，仍失败跳过留痕，
+        不阻断整体批量（采集产物落盘 data/，供「分析」阶段复用）。
+        """
+        pool = self._filtered_pool(pool_file, sector)
+        ok, failed = [], {}
+        with RUN_STATS.time_phase("采集"):
+            for sector_name, items in pool.items():
+                for symbol, name in items:
+                    request = ReportRequest(
+                        report_type="company", target=symbol, name=name)
+                    plan = self.planner.plan(request)
+                    data = None
+                    for attempt in range(2):  # 有限重试：至多 2 次
+                        try:
+                            data = self.researcher.collect_only(plan)
+                            break
+                        except Exception as e:  # noqa: BLE001
+                            if attempt == 0:
+                                logger.warning(
+                                    "采集 %s %s 失败，重试一次: %s",
+                                    symbol, name, e)
+                                continue
+                            RUN_STATS.record_failure(
+                                f"collect:{symbol}", e)
+                    if data is not None:
+                        ok.append(symbol)
+                    else:
+                        failed[symbol] = f"{sector_name}: 采集重试仍失败"
+        return {"ok": ok, "failed": failed}
+
+    def score_pool(self, pool_file: str, sector: str = "",
+                   save: bool = False) -> dict:
+        """「分析」阶段：读已采集数据跑分析引擎并因子打分
+
+        确定性规则（不走 LLM、不重新采集）；评分缓存落盘
+        decision_log/scores_cache.json，供「决策」阶段直接复用
+        （阶段间状态传递）。
+        """
+        pool = self._filtered_pool(pool_file, sector)
+        scores, failed = {}, {}
+        with RUN_STATS.time_phase("分析"):
+            for sector_name, items in pool.items():
+                for symbol, name in items:
+                    request = ReportRequest(
+                        report_type="company", target=symbol, name=name)
+                    plan = self.planner.plan(request)
+                    try:
+                        research_data = self.researcher.analyze_cached(plan)
+                        scores[symbol] = self.investor.score_research(
+                            research_data)
+                    except Exception as e:  # noqa: BLE001
+                        scores[symbol] = 0.0
+                        failed[symbol] = str(e)[:200]
+                        RUN_STATS.record_failure(f"analyze:{symbol}", e)
+
+        result = {"scores": scores, "failed": failed}
+        if save:
+            log_dir = os.path.join(self.output_dir, "decision_log")
+            os.makedirs(log_dir, exist_ok=True)
+            path = os.path.join(log_dir, "scores_cache.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+            result["scores_cache"] = path
+        return result
+
     def run_investment(self, pool_file: str, save: bool = False,
-                       sector: str = "") -> dict:
+                       sector: str = "", reports: bool = True,
+                       scores: Optional[dict] = None) -> dict:
         """公司池批量投资决策：逐标的采集分析评分 → 仓位配置
 
         支持单板块批量打通：sector 非空时只跑该板块（Day 4 验收：
         对某个板块跑批量流程产出多份报告 + 组合配置）。
         评分用因子规则（采集+分析即可，不走 LLM 研报生成，
         批量耗时可控；入选标的另由 decide 单标流程产出研报）。
+
+        Args:
+            reports: 入选标的是否补生成完整研报（Swarmflow「报告」
+                阶段单独驱动时可置 False，决策阶段只出组合）。
+            scores: 「分析」阶段预计算评分缓存；非空时跳过重复
+                采集分析（阶段间状态传递）。
         """
         def _research(symbol: str, name: str) -> dict:
             request = ReportRequest(
@@ -125,24 +227,30 @@ class ReportOrchestrator:
             plan = self.planner.plan(request)
             return self.researcher.research(plan)
 
-        portfolio = self.investor.run_portfolio(
-            pool_file, save=save, output_dir=self.output_dir,
-            research_fn=_research, sector=sector)
+        with RUN_STATS.time_phase("决策"):
+            portfolio = self.investor.run_portfolio(
+                pool_file, save=save, output_dir=self.output_dir,
+                research_fn=_research, sector=sector, scores=scores)
 
         # 入选标的产出完整研报（验收：批量流程产出多份报告 +
         # 组合配置；采集/分析已缓存，仅补 LLM 撰写开销）
-        if save and portfolio:
-            from collectors.pool_loader import load_pool
-            pool = load_pool(pool_file)
-            name_map = {s: n for items in pool.values()
-                        for s, n in items}
-            for symbol in portfolio:
-                request = ReportRequest(
-                    report_type="company", target=symbol,
-                    name=name_map.get(symbol, ""))
-                result = self.generate(request)
-                if result.content:
-                    self.save_report(result, f"{symbol}.md")
+        if save and reports and portfolio:
+            with RUN_STATS.time_phase("报告"):
+                from collectors.pool_loader import load_pool
+                pool = load_pool(pool_file)
+                name_map = {s: n for items in pool.values()
+                            for s, n in items}
+                for symbol in portfolio:
+                    request = ReportRequest(
+                        report_type="company", target=symbol,
+                        name=name_map.get(symbol, ""))
+                    try:
+                        result = self.generate(request)
+                        if result.content:
+                            self.save_report(result, f"{symbol}.md")
+                    except Exception as e:  # noqa: BLE001 单份研报失败不阻断
+                        logger.warning("研报生成失败 %s: %s", symbol, e)
+                        RUN_STATS.record_failure(f"report:{symbol}", e)
         return portfolio
 
     def save_report(self, result: ReportResult, filename: str) -> str:

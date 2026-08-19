@@ -2,6 +2,49 @@
 
 本目录存放 `finance-report` 技能（`jiuwenswarm/resources/agent/workspace/skills/finance-report/`）数据采集层的落盘产物。
 
+## 环境说明与端到端复现（Day 5 交付）
+
+### 依赖清单
+
+- Python ≥ 3.10；核心依赖已在项目根 `pyproject.toml` 声明：
+  `akshare pandas numpy matplotlib openpyxl requests ipython`
+- RAG 外部记忆（可选）：`chromadb sentence-transformers`；未安装时自动降级本地字符 bigram TF-IDF（零依赖、可离线复现）
+
+### 配置（项目根 `.env`，不随代码提交）
+
+| 变量 | 用途 | 缺省行为 |
+| --- | --- | --- |
+| `API_KEY` / `ANTHROPIC_API_KEY` | MiniMax LLM（Anthropic 协议，`API_BASE` 默认 `https://api.minimaxi.com/anthropic`，`MODEL_NAME` 默认 `MiniMax-M2`） | 缺失时撰写/审查走规则降级 |
+| `ZHIPU_API_KEY` | 智谱 embedding-3（RAG 向量化主路径） | 缺失时降级本地 TF-IDF |
+
+### 端到端复现步骤
+
+```bash
+cd jiuwen/resources/agent/workspace/skills/finance-report
+
+# 五阶段全流程（Swarmflow 工作流经框架调度；等价 CLI 分步如下）
+python run_report.py pool                                            # 1 选股：公司池校验
+python run_report.py research --stage collect --save                 # 2 采集：全池（缓存优先）
+python run_report.py research --stage analyze --save                 # 3 分析：评分缓存落盘
+python run_report.py invest --pool-file example/上市公司列表.xlsx \
+    --use-cached-scores --skip-reports --save                        # 4 决策：Portfolio.json
+python run_report.py company --target <入选代码> --save              # 5 报告：入选标的逐个生成
+```
+
+### 决策日志与资源消耗记录
+
+| 文件 | 内容 |
+| --- | --- |
+| `decision_log/decision.json` | 全池评分、最终组合、空仓理由、分散度提示、失败标的留痕 |
+| `decision_log/scores_cache.json` | 分析阶段因子评分缓存（决策阶段状态传递） |
+| `decision_log/run_stats.json` | 各阶段耗时、LLM 调用次数与 input/output token 消耗、固定随机种子（`SEED=20260819`）、失败记录；每次 `--save` 运行追加一条，保留最近 10 次 |
+
+### 可复现性说明
+
+- 全流程打分与仓位分配为**确定性规则**（因子打分表见 `agents/investor.py` 注释），无随机源；进程启动即 `fix_random_seed()` 固定种子并记入 `run_stats.json`
+- 采集数据落盘 `data/`（缓存优先、断点续采），同一缓存复放结果一致；如需强制重采，删除对应 `{代码}_{类型}.json` 即可
+- 第三方按上述步骤与 `.env` 配置即可重放决策；评分差异只可能来自行情/财报数据源的时间点差异（`collected_at` 已留痕）
+
 ## 目录结构
 
 ```

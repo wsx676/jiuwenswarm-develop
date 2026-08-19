@@ -1,6 +1,7 @@
 ---
 name: finance-report
-version: 2.0.0
+version: 2.1.0
+kind: swarm-skill
 description: 金融分析与投资决策 Agent：在组委会指定上市公司池（A股六大板块）内自主选股并输出仓位配置（Portfolio.json），批量生成个股投资研报（股票代码.md）。深度耦合 JiuwenSwarm 框架（Leader-Team 多智能体 + Swarmflow + RAG + MCP + CodeExecutor）。Use when user asks for company/industry/macro financial reports or investment portfolio decisions.
 tags: [finance, report, agent, rag, mcp, portfolio, investment]
 allowed_tools: [bash, read_file, write_file, read_memory, write_memory, mcp]
@@ -26,6 +27,8 @@ finance-report/
 ├── SKILL.md                    # 技能定义（本文件）
 ├── run_report.py               # 命令行入口脚本
 ├── orchestrator.py             # 多 Agent 编排入口（含自检反馈循环）
+├── scripts/
+│   └── workflow.py             # Swarmflow 确定性五阶段工作流（Day 5）
 ├── agents/                     # 子 Agent 定义
 │   ├── planner.py              # 任务规划 Agent
 │   ├── researcher.py           # 数据研究 Agent（迭代式 Deep Research）
@@ -38,6 +41,10 @@ finance-report/
 │   ├── news_collector.py       # 新闻政策采集（迭代式 Deep Research）
 │   ├── filing_collector.py     # 公司披露采集（三大表）
 │   └── rag_retriever.py        # 财务知识 RAG 检索
+├── common/                     # 公共能力
+│   ├── llm_client.py           # LLM 客户端（Anthropic 协议，含 token 用量统计）
+│   ├── telemetry.py            # 运行遥测：阶段耗时/Token 消耗/随机种子（Day 5）
+│   └── hybrid_memory.py        # 混合记忆分流
 ├── analyzers/                  # 分析引擎层
 │   ├── code_executor.py        # CodeExecutor（Notebook式执行+AST白名单）
 │   ├── finance_analyzer.py     # 财务分析（盈利/偿债/成长/估值）
@@ -86,6 +93,28 @@ python run_report.py macro --period 2026Q2 --save
 python run_report.py invest --pool-file example/上市公司列表.xlsx --save
 ```
 
+### 公司池校验 / 采集 / 分析两阶段（Day 5，供 Swarmflow 工作流调用）
+
+```bash
+python run_report.py pool                                  # 枚举板块与标的清单
+python run_report.py research --stage collect              # 全池采集（缓存优先，可按 --sector 单板块）
+python run_report.py research --stage analyze --save       # 读缓存分析 + 因子打分，评分缓存落盘
+python run_report.py invest --pool-file example/上市公司列表.xlsx --use-cached-scores --skip-reports --save
+```
+
+## Workflow
+
+全流程封装为 Swarmflow 确定性五阶段工作流（`scripts/workflow.py`，
+可由 TUI SwarmFlow 直接调度），阶段间状态落盘传递、失败自动重试一次：
+
+1. **选股**：校验公司池白名单，枚举六大板块与标的清单（`pool` 子命令）
+2. **采集**：按板块扇出逐标的采集行情/财报/新闻，缓存落盘 `data/`（断点续采）
+3. **分析**：读已采集数据跑分析引擎并因子打分，评分缓存 `decision_log/scores_cache.json`
+4. **决策**：复用评分缓存做风控约束仓位配置，产出 `Portfolio.json` + 决策日志
+5. **报告**：仅为入选标的逐个生成个股研报（`{股票代码}.md`）
+
+入参：`{"pool_file": "example/上市公司列表.xlsx", "sector": ""}`（sector 非空时只跑该板块）。
+
 ## 执行流程
 
 1. **Planner** 判断任务类型，拆解采集与分析子任务
@@ -110,3 +139,15 @@ python run_report.py invest --pool-file example/上市公司列表.xlsx --save
 - 投资组合：`reports/finance-report/Portfolio.json`（`{"股票代码": 持仓占比}`，单标的权重 ≤ 0.4，权重之和 ≤ 1.0）
 - 图表：`reports/finance-report/charts/`（本地图片，报告仅引用真实存在的本地图片）
 - 决策日志：`reports/finance-report/decision_log/`（决策过程与资源消耗记录）
+
+## Files
+
+| 文件 | 说明 |
+| --- | --- |
+| `scripts/workflow.py` | Swarmflow 五阶段确定性工作流（本技能执行定义） |
+| `run_report.py` | CLI 入口（pool/research/company/industry/macro/invest 六子命令） |
+| `orchestrator.py` | 多 Agent 编排（含阶段计时与批量容错） |
+| `common/telemetry.py` | 遥测：随机种子/阶段耗时/LLM token 消耗 → `decision_log/run_stats.json` |
+| `reports/finance-report/decision_log/decision.json` | 决策日志（评分/权重/空仓理由/失败留痕） |
+| `reports/finance-report/decision_log/scores_cache.json` | 分析阶段评分缓存（阶段间状态传递） |
+| `reports/finance-report/README.md` | 环境说明与复现步骤（依赖清单 + 配置） |

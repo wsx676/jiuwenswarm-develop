@@ -85,6 +85,13 @@ class LLMClient:
         )
         resp.raise_for_status()
         data = resp.json()
+        # Day 5 资源消耗记录：提取响应 usage 字段累计到遥测单例
+        # （input_tokens/output_tokens，run_stats.json 落盘可追溯）
+        try:
+            from common.telemetry import RUN_STATS
+            RUN_STATS.add_llm_usage(data.get("usage"))
+        except Exception:  # noqa: BLE001 遥测失败不影响主流程
+            pass
         texts = []
         for block in data.get("content", []):
             if block.get("type") == "text" and block.get("text"):
@@ -92,9 +99,10 @@ class LLMClient:
         return "".join(texts).strip()
 
     def chat_json(self, prompt: str, system: str = "",
-                  max_tokens: int = 2048):
+                  max_tokens: int = 2048, temperature: float = 0.3):
         """对话并解析 JSON 输出；解析失败返回 None"""
-        text = self.chat(prompt, system=system, max_tokens=max_tokens)
+        text = self.chat(prompt, system=system, max_tokens=max_tokens,
+                         temperature=temperature)
         m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         if m:
             text = m.group(1)

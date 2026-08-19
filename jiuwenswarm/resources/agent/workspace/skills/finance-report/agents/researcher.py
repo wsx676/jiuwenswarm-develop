@@ -64,8 +64,87 @@ class ResearcherAgent:
             except Exception as e:  # noqa: BLE001 知识增强失败不阻断
                 logger.warning("RAG 检索失败，降级无知识增强: %s", e)
 
-        # 3. 分析引擎：按 analyze_tasks 门控（计划驱动，行业/宏观
-        #    研报不跑财务分析，避免无谓的引擎调用与网络请求）
+        # 3+4. 分析引擎 + 图文同源图表（与采集解耦，供 Swarmflow
+        #      「采集 / 分析」两阶段复用）
+        result = {
+            "quote_data": quote_data,
+            "filing_data": filing_data,
+            "news_data": news_data,
+            "knowledge_chunks": knowledge_chunks,
+            "claims": [],
+        }
+        result.update(self._analyze(
+            plan, quote_data, filing_data, news_data))
+        # RAG 知识片段纳入来源清单（analyze_cached 无知识检索，走空）
+        result["citations"] = self._build_citations(
+            quote_data, filing_data, news_data, knowledge_chunks)
+        return result
+
+    # ------------------------------------------------------------------
+    # 采集 / 分析两阶段拆分（Swarmflow 确定性工作流的阶段状态传递）
+    # ------------------------------------------------------------------
+    def collect_only(self, plan: dict) -> dict:
+        """「采集」阶段：只拉数据不跑分析引擎（缓存优先，断点续采）
+
+        返回 {kind: data}；采集失败直接抛出，由调用方按标的重试。
+        """
+        symbol = plan.get("target", "")
+        name = plan.get("name", "")
+        tasks = plan.get("collect_tasks") or []
+        return {
+            "quote": (
+                self._collect("quote", symbol,
+                              lambda: self._collect_quote(symbol, name))
+                if "quote" in tasks else {}),
+            "filing": (
+                self._collect("filing", symbol,
+                              lambda: self._collect_filing(symbol))
+                if "filing" in tasks else {}),
+            "news": (
+                self._collect("news", symbol,
+                              lambda: self._collect_news(name or symbol))
+                if "news" in tasks else {}),
+        }
+
+    def analyze_cached(self, plan: dict) -> dict:
+        """「分析」阶段：读已采集落盘数据跑分析引擎（缺数据不重采）
+
+        依赖「采集」阶段的缓存产物；确定性规则输出，供 Investor
+        因子打分复用（research_data 结构与 research() 兼容）。
+        """
+        symbol = plan.get("target", "")
+        quote_data = self._load_cache("quote", symbol)
+        filing_data = self._load_cache("filing", symbol)
+        news_data = self._load_cache("news", symbol)
+        result = {
+            "quote_data": quote_data,
+            "filing_data": filing_data,
+            "news_data": news_data,
+            "knowledge_chunks": [],
+            "claims": [],
+        }
+        result.update(self._analyze(
+            plan, quote_data, filing_data, news_data))
+        return result
+
+    def _load_cache(self, kind: str, symbol: str) -> dict:
+        """直读采集缓存 {symbol}_{kind}.json；缺失或损坏返回空"""
+        path = os.path.join(self.data_dir, f"{symbol}_{kind}.json")
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("缓存 %s 读取失败: %s", path, e)
+            return {}
+
+    def _analyze(self, plan: dict, quote_data: dict, filing_data: dict,
+                 news_data: dict) -> dict:
+        """分析引擎调度 + 图表生成（research / analyze_cached 共用）"""
+        symbol = plan.get("target", "")
+        # 分析引擎：按 analyze_tasks 门控（计划驱动，行业/宏观
+        # 研报不跑财务分析，避免无谓的引擎调用与网络请求）
         analyze = plan.get("analyze_tasks") or []
         statements = self._to_statements(filing_data)
         finance_analysis = None
@@ -96,7 +175,7 @@ class ResearcherAgent:
             except Exception as e:  # noqa: BLE001
                 logger.warning("宏观分析失败: %s", e)
 
-        # 4. 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
+        # 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
         stmt_dicts = [s.to_dict() for s in statements]
         charts = []
         try:
@@ -112,17 +191,12 @@ class ResearcherAgent:
             logger.warning("图表生成失败: %s", e)
 
         return {
-            "quote_data": quote_data,
-            "filing_data": filing_data,
-            "news_data": news_data,
-            "knowledge_chunks": knowledge_chunks,
-            "claims": [],
             "finance_analysis": finance_analysis,
             "industry_analysis": industry_analysis,
             "macro_analysis": macro_analysis,
             "charts": charts,
             "citations": self._build_citations(
-                quote_data, filing_data, news_data, knowledge_chunks),
+                quote_data, filing_data, news_data, []),
         }
 
     # ------------------------------------------------------------------

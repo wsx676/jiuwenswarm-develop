@@ -14,8 +14,13 @@
 """
 
 import json
+import logging
 import os
 from typing import List, Optional
+
+from common.telemetry import RUN_STATS
+
+logger = logging.getLogger(__name__)
 
 
 class InvestorAgent:
@@ -39,6 +44,9 @@ class InvestorAgent:
         self.score_threshold = investor_cfg.get(
             "score_threshold", self.DEFAULT_SCORE_THRESHOLD
         )
+        # Day 5 组合质量约束：达标标的过多时按评分取前 N（避免 30+
+        # 标的微权重过度分散）；None 为不限制（兼容单研报流程）
+        self.max_positions = investor_cfg.get("max_positions")
         # 决策备注（供 _save 写入决策日志，风控约束可追溯）
         self.decision_notes: List[str] = []
 
@@ -138,6 +146,7 @@ class InvestorAgent:
         self, pool_file: str, save: bool = False,
         output_dir: str = "reports/finance-report",
         research_fn=None, sector: str = "",
+        scores: Optional[dict] = None,
     ) -> dict:
         """公司池批量选股与仓位配置
 
@@ -148,6 +157,9 @@ class InvestorAgent:
         Args:
             sector: 板块名（单板块批量打通）；非空时只对该板块
                 标的评分配置，空则全池。
+            scores: 预计算评分（Swarmflow「分析」阶段缓存）；非空时
+                直接复用，跳过 research_fn（阶段间状态传递，避免重复
+                采集分析）。
         """
         from collectors.pool_loader import load_pool, whitelist_symbols
 
@@ -161,17 +173,40 @@ class InvestorAgent:
             pool = {sector: pool[sector]}
 
         # 逐标的评分：research_fn(symbol, name) -> research_data
-        scores: dict = {}  # symbol -> score
-        if research_fn is not None:
-            for sector_items in pool.values():
-                for symbol, name in sector_items:
-                    try:
-                        data = research_fn(symbol, name)
-                        scores[symbol] = self.score_research(data)
-                    except Exception as e:  # noqa: BLE001 单标的失败不阻断批量
-                        scores[symbol] = 0.0
+        # Day 5 批量容错：单标的失败自动重试一次，仍失败则记 0 分
+        # 跳过并留痕（决策日志 + 遥测 failures），不阻断整体批量
+        score_notes: List[str] = []
+        if scores is None:
+            scores = {}
+            if research_fn is not None:
+                for sector_items in pool.values():
+                    for symbol, name in sector_items:
+                        data = None
+                        for attempt in range(2):  # 有限重试：至多 2 次
+                            try:
+                                data = research_fn(symbol, name)
+                                break
+                            except Exception as e:  # noqa: BLE001
+                                if attempt == 0:
+                                    logger.warning(
+                                        "标的 %s %s 研究失败，重试一次: %s",
+                                        symbol, name, e)
+                                    continue
+                                logger.warning(
+                                    "标的 %s %s 重试仍失败，跳过: %s",
+                                    symbol, name, e)
+                                RUN_STATS.record_failure(
+                                    f"research:{symbol}", e)
+                                score_notes.append(
+                                    f"标的 {symbol} {name} 采集分析重试"
+                                    f"仍失败，按 0 分跳过: {str(e)[:200]}")
+                        scores[symbol] = (
+                            self.score_research(data)
+                            if data is not None else 0.0)
 
         portfolio = self._allocate(scores, allowed)
+        # 评分失败留痕并入决策日志（_allocate 会重置 decision_notes）
+        self.decision_notes.extend(score_notes)
 
         # 提交硬约束校验：代码在白名单内、权重合规
         errors = self.validate_portfolio(portfolio, allowed)
@@ -219,6 +254,14 @@ class InvestorAgent:
 
         # 2. 按评分排序取前 N，归一化后截断单标的上限
         ranked = sorted(valid.items(), key=lambda kv: kv[1], reverse=True)
+        # Day 5 组合质量约束：达标标的过多时取评分前 max_positions，
+        # 避免微权重过度分散（调整依据回写决策日志，可追溯可复现）
+        if (self.max_positions and len(ranked) > self.max_positions):
+            self.decision_notes.append(
+                f"持仓集中度：达标标的 {len(ranked)} 只，按评分取前 "
+                f"{self.max_positions} 只配置（尾部标的评分优势不足，"
+                f"微权重对组合贡献有限）")
+            ranked = ranked[:self.max_positions]
         # M2 修复：分散度约束生效——达标标的不足 min_position_count
         # 时留痕说明（单研报流程天然单标的，按软约束阐明而非强制空仓）
         if len(ranked) < self.min_positions:
