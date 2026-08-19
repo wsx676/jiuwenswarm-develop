@@ -4,55 +4,6 @@
       "seed": 20260819,
       "phases": [
         {
-          "phase": "决策",
-          "seconds": 0.55,
-          "error": false
-        }
-      ],
-      "total_seconds": 0.55,
-      "llm": {
-        "calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:601168",
-          "seconds": 0.53,
-          "error": false
-        },
-        {
-          "phase": "研究:601168",
-          "seconds": 1.73,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:601168",
-          "seconds": 72.5,
-          "error": false
-        },
-        {
-          "phase": "决策:601168",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 74.76,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 6148,
-        "output_tokens": 5282
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
           "phase": "规划:601899",
           "seconds": 0.55,
           "error": false
@@ -292,6 +243,40 @@
         "calls": 10,
         "input_tokens": 6033,
         "output_tokens": 5355
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "分析",
+          "seconds": 14.83,
+          "error": false
+        }
+      ],
+      "total_seconds": 14.83,
+      "llm": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "决策",
+          "seconds": 0.89,
+          "error": false
+        }
+      ],
+      "total_seconds": 0.89,
+      "llm": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
       },
       "failures": []
     }

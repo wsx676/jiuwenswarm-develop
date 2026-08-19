@@ -58,6 +58,21 @@ reports/finance-report/
 
 ## 快速开始
 
+### 一键复现（首选入口，赛题复现要求）
+
+```bash
+# 端到端复现投资决策全过程：池校验→全池采集→因子打分→Portfolio 决策
+# （采集缓存优先、幂等可重跑；资源消耗见 decision_log/run_stats.json）
+python jiuwenswarm/resources/agent/workspace/skills/finance-report/scripts/reproduce.py
+#   --sector 消费板块   仅复现单板块（更快）
+#   --with-report       末尾追加一份示例个股研报
+```
+
+产物：`Portfolio.json` + `decision_log/decision.json`（含 `position_decision`
+与 `position_rationale`，阐明满仓/半仓/空仓决策逻辑）+ `run_stats.json`。
+
+### 分步执行
+
 ```bash
 # 公司研报（单只）
 python run_report.py company --target 600519 --name 贵州茅台 --save

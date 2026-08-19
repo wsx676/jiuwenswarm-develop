@@ -86,7 +86,20 @@ finance-report/
 
 > 以下命令均在技能目录执行：`cd jiuwenswarm/resources/agent/workspace/skills/finance-report`
 
-### 5.1 五阶段全流程（与 Swarmflow 工作流等价）
+### 5.1 一键复现（首选入口）
+
+赛题要求第三方可完整复现投资决策过程及资源消耗数据，提供一键脚本：
+
+```bash
+# 项目根目录执行：池校验 → 全池采集 → 因子打分 → Portfolio 决策
+python jiuwenswarm/resources/agent/workspace/skills/finance-report/scripts/reproduce.py
+#   --sector 消费板块   仅复现单板块（更快）
+#   --with-report       末尾追加一份示例个股研报（贵州茅台）
+```
+
+采集缓存优先、幂等可重跑；脚本末尾打印产物摘要。资源消耗数据（各阶段耗时/LLM Token/固定种子/失败留痕）见 `reports/finance-report/decision_log/run_stats.json`；仓位决策逻辑（满仓/半仓/空仓的理由）见 `decision_log/decision.json` 的 `position_decision` / `position_rationale` 字段。
+
+### 5.2 五阶段分步执行（与 Swarmflow 工作流等价）
 
 ```bash
 python run_report.py pool                                       # 1 选股：公司池白名单校验与板块枚举
@@ -97,7 +110,7 @@ python run_report.py invest --pool-file example/上市公司列表.xlsx \
 python run_report.py company --target 603986 --save             # 5 报告：入选标的逐个生成研报
 ```
 
-### 5.2 常用单命令
+### 5.3 常用单命令
 
 ```bash
 # 单标的研报（端到端：采集 → 分析 → 撰写 → 审查回流）
@@ -109,7 +122,7 @@ python run_report.py invest --sector 消费板块 --save
 # 空仓决策合法：全部标的评分低于阈值时 Portfolio.json 为 {}，决策日志阐明理由
 ```
 
-### 5.3 Swarmflow 工作流
+### 5.4 Swarmflow 工作流
 
 经 JiuwenSwarm 框架调度 `scripts/workflow.py` 即可一键完成五阶段全流程（含阶段失败自动重试与降级路径），执行定义与上述 CLI 分步完全等价。
 

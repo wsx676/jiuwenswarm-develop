@@ -298,6 +298,45 @@ class InvestorAgent:
                           if s != last), 2)
         return portfolio
 
+    def _position_stance(self, portfolio: dict,
+                         scores: dict) -> tuple:
+        """仓位决策与理由（赛题要求：满仓/半仓/空仓均须阐明决策逻辑）
+
+        理由由确定性规则基于真实评分与配置结果生成（禁止编造），
+        口径与 _allocate 风控约束一致：入选均分、达标/未达标标的数、
+        总权重与现金保留比例。
+
+        Returns:
+            (position_decision, position_rationale)
+            decision ∈ {"full", "partial", "empty"}
+        """
+        total_w = round(sum(portfolio.values()), 2)
+        n_scores = len(scores)
+        if not portfolio:
+            return "empty", (
+                f"公司池 {n_scores} 只标的均未达到 "
+                f"{self.score_threshold:.0f} 分入选阈值"
+                f"（数据不足或基本面承压），不具备配置条件，"
+                f"空仓为防御性决策，等待基本面与市场信号改善")
+        held_scores = [scores.get(s, 0.0) for s in portfolio]
+        avg = sum(held_scores) / len(held_scores)
+        above = sum(1 for v in scores.values()
+                    if v >= self.score_threshold)
+        below = n_scores - above
+        if total_w >= 0.95:
+            return "full", (
+                f"入选 {len(portfolio)} 只标的（平均评分 {avg:.1f}）；"
+                f"池内 {n_scores} 只中 {above} 只达到 "
+                f"{self.score_threshold:.0f} 分阈值，达标覆盖充分，"
+                f"权重归一化至 {total_w:.2f} 满仓配置")
+        return "partial", (
+            f"入选 {len(portfolio)} 只标的（平均评分 {avg:.1f}，"
+            f"总权重 {total_w:.2f}）；池内 {n_scores} 只中仅 "
+            f"{above} 只达到 {self.score_threshold:.0f} 分入选阈值，"
+            f"其余 {below} 只未达配置标准，按规则不强制满仓，"
+            f"保留 {round((1.0 - total_w) * 100)}% 现金应对"
+            f"宏观与市场波动")
+
     def _save(self, portfolio: dict, output_dir: str, scores: dict,
               notes: Optional[List[str]] = None) -> None:
         """保存 Portfolio.json 与决策日志（成果可复现性）"""
@@ -306,7 +345,8 @@ class InvestorAgent:
                   encoding="utf-8") as f:
             json.dump(portfolio, f, ensure_ascii=False, indent=2)
 
-        # 决策日志：评分、权重、空仓理由、分散度提示留痕
+        # 决策日志：评分、权重、仓位决策与理由、空仓理由、分散度提示留痕
+        decision, rationale = self._position_stance(portfolio, scores)
         log_dir = os.path.join(output_dir, "decision_log")
         os.makedirs(log_dir, exist_ok=True)
         log = {
@@ -315,6 +355,9 @@ class InvestorAgent:
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "scores": scores,
             "portfolio": portfolio,
+            # 赛题要求：满仓/半仓/空仓均须在报告中阐明决策逻辑
+            "position_decision": decision,
+            "position_rationale": rationale,
             "empty_position": len(portfolio) == 0,
             "empty_reason": (
                 "公司池内所有标的评分均低于阈值，不具备投资价值"

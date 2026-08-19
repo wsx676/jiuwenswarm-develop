@@ -182,6 +182,14 @@ class TestBatchPortfolio:
         log = json.load(open(
             tmp_path / "decision_log" / "decision.json", encoding="utf-8"))
         assert log.get("generated_at")
+        # 3.2：仓位决策与理由须阐明（赛题要求：满仓/半仓/空仓均须说明逻辑）
+        assert log.get("position_decision") in ("full", "partial", "empty")
+        assert log.get("position_rationale")
+        if log["empty_position"]:
+            assert log["position_decision"] == "empty"
+        elif sum(saved.values()) < 0.95:
+            assert log["position_decision"] == "partial"
+            assert "现金" in log["position_rationale"]  # 半仓阐明现金保留
 
     def test_cached_scores_respect_sector(self, fake_pool, tmp_path):
         """M1 回归：--use-cached-scores + --sector 组合时，
@@ -278,3 +286,33 @@ class TestOrchestratorInvestWiring:
         assert portfolio
         # 入选标的各产出一份研报
         assert sorted(saved_files) == sorted(f"{s}.md" for s in portfolio)
+
+
+class TestPositionStance:
+    """3.2：仓位决策与理由（满仓/半仓/空仓均须阐明决策逻辑）"""
+
+    def _inv(self):
+        from agents.investor import InvestorAgent
+        return InvestorAgent({})
+
+    def test_empty_position_rationale(self):
+        decision, rationale = self._inv()._position_stance(
+            {}, {"600519": 40.0, "000858": 30.0})
+        assert decision == "empty"
+        assert "阈值" in rationale and "空仓" in rationale
+
+    def test_partial_position_rationale(self):
+        scores = {"600519": 80.0, "000858": 70.0, "600276": 40.0}
+        decision, rationale = self._inv()._position_stance(
+            {"600519": 0.45, "000858": 0.35}, scores)
+        assert decision == "partial"
+        assert "平均评分 75.0" in rationale   # 入选均分真实计算
+        assert "1 只未达" in rationale          # 未达标标的数
+        assert "现金" in rationale              # 现金保留阐明
+
+    def test_full_position_rationale(self):
+        scores = {"600519": 80.0, "000858": 70.0}
+        decision, rationale = self._inv()._position_stance(
+            {"600519": 0.55, "000858": 0.45}, scores)
+        assert decision == "full"
+        assert "满仓" in rationale

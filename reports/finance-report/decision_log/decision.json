@@ -1,4 +1,5 @@
 {
+  "generated_at": "2026-08-20T01:36:45",
   "scores": {
     "601318": 51.0,
     "600036": 63.0,
@@ -60,6 +61,8 @@
     "600309": 0.12,
     "601600": 0.11
   },
+  "position_decision": "full",
+  "position_rationale": "入选 8 只标的（平均评分 88.1）；池内 49 只中 32 只达到 60 分阈值，达标覆盖充分，权重归一化至 0.99 满仓配置",
   "empty_position": false,
   "empty_reason": "",
   "notes": [
