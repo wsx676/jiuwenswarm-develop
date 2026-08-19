@@ -178,6 +178,30 @@ class TestBatchPortfolio:
         assert saved == portfolio
         assert sum(saved.values()) <= 1.0 + 1e-9
         assert all(0 < w <= 0.4 + 1e-9 for w in saved.values())
+        # L4：决策日志须含时间戳（复现批次对齐）
+        log = json.load(open(
+            tmp_path / "decision_log" / "decision.json", encoding="utf-8"))
+        assert log.get("generated_at")
+
+    def test_cached_scores_respect_sector(self, fake_pool, tmp_path):
+        """M1 回归：--use-cached-scores + --sector 组合时，
+        全池缓存评分须按板块收窄过滤，非目标板块标的不入选"""
+        import json
+        from agents.investor import InvestorAgent
+
+        def must_not_be_called(symbol, name):
+            raise AssertionError("缓存评分路径不应触发实时采集")
+
+        scores = {"600519": 95.0, "000858": 90.0,
+                  "600276": 98.0}  # 600276 属「医药」板块
+        inv = InvestorAgent({})
+        portfolio = inv.run_portfolio(
+            "pool.xlsx", save=True, output_dir=str(tmp_path),
+            research_fn=must_not_be_called, sector="消费", scores=scores)
+        assert set(portfolio) == {"600519", "000858"}  # 600276 被过滤
+        log = json.load(open(
+            tmp_path / "decision_log" / "decision.json", encoding="utf-8"))
+        assert "600276" not in log["scores"]   # 决策留痕同口径
 
     def test_rounding_never_exceeds_total(self):
         """8 只近似均分：round 逐项舍入累计误差不得使总权重超 1.0

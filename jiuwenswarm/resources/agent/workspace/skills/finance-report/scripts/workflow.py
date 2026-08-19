@@ -131,6 +131,8 @@ $_cli_hint
 
 该命令端到端生成该标的个股投资研报（撰写 + 审查回流 ≤ 2 轮），
 落盘 reports/finance-report/个股投资研报/$symbol.md。
+（L6 说明：命令不带 --name，公司名由行情缓存/公司池自动回填，
+工作流「先采集后报告」顺序下采集缓存必然已含 name 字段。）
 命令结束后，只返回一个 JSON 对象，不要输出其他内容：
 {"result": "审查结论与研报保存路径", "verdict": "ok", "sectors": [], "portfolio": {}}
 命令执行失败时返回 {"result": "错误摘要", "verdict": "failed", "sectors": [], "portfolio": {}}
@@ -215,9 +217,15 @@ async def call_with_retry(prompt, phase_title, label, timeout):
     """
     result = dict(_FAILED)
     for attempt in range(MAX_ATTEMPTS):
-        raw = await agent(
-            prompt, label=label, phase=phase_title,
-            schema=RESULT_SCHEMA, options={"timeout": timeout})
+        # L1 修复：agent 调用异常（超时等）也纳入重试路径，
+        # 不让异常穿透重试封装中断 pmap 扇出
+        try:
+            raw = await agent(
+                prompt, label=label, phase=phase_title,
+                schema=RESULT_SCHEMA, options={"timeout": timeout})
+        except Exception as e:  # noqa: BLE001
+            log(f"{label} 第 {attempt + 1} 次调用异常: {str(e)[:200]}")
+            raw = None
         result = extract_json(raw, fallback=dict(_FAILED))
         if safe_get(result, "verdict", "failed") == "ok":
             return result

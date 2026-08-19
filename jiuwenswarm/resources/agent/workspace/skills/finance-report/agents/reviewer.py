@@ -69,8 +69,9 @@ class ReviewerAgent:
         compliance_issues = self._check_compliance(draft)
         issues.extend(compliance_issues)
 
+        # L2 修复：issues==0 时 score 恒为 100，阈值条件冗余
         score = max(0.0, 100.0 - len(issues) * 10.0)
-        passed = len(issues) == 0 and score >= 70.0
+        passed = len(issues) == 0
 
         return ReviewResult(
             passed=passed,
@@ -138,10 +139,9 @@ class ReviewerAgent:
         return issues
 
     def _check_compliance(self, draft) -> List[str]:
-        """合规性校验"""
+        """合规性校验（L2 修复：风险提示已由 _check_structure 校验，
+        此处不再重复计分）"""
         issues = []
-        if "风险提示" not in draft.content:
-            issues.append("缺失风险提示章节")
         if "免责声明" not in draft.content:
             issues.append("缺失免责声明")
         if "数据来源" not in draft.content:

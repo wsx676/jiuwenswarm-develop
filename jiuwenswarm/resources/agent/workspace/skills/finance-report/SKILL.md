@@ -16,9 +16,11 @@ allowed_tools: [bash, read_file, write_file, read_memory, write_memory, mcp]
 | 类型 | 触发关键词 | 示例 |
 |------|-----------|------|
 | 公司研报 | "公司研报""个股分析""XX公司" | 生成贵州茅台公司研报 |
-| 行业研报 | "行业研报""行业分析" | 生成半导体行业研报 |
-| 宏观研报 | "宏观研报""策略报告" | 生成宏观经济季度研报 |
+| 行业研报（规则模板版） | "行业研报""行业分析" | 生成半导体行业研报 |
+| 宏观研报（规则模板版） | "宏观研报""策略报告" | 生成宏观经济季度研报 |
 | 投资决策 | "投资决策""仓位配置""组合配置" | 基于分析结果输出投资组合 |
+
+> 当前版本聚焦公司研报与投资决策的完整闭环；行业/宏观研报为规则模板骨架（分析引擎数据已接入，LLM 正文撰写为规划中能力）。
 
 ## 目录结构
 
@@ -75,13 +77,13 @@ pip install chromadb sentence-transformers   # RAG（可选，外部记忆）
 python run_report.py company --target 600519 --name 贵州茅台 --save
 ```
 
-### 生成行业研报
+### 生成行业研报（规则模板版）
 
 ```bash
 python run_report.py industry --name 半导体 --save
 ```
 
-### 生成宏观研报
+### 生成宏观研报（规则模板版）
 
 ```bash
 python run_report.py macro --period 2026Q2 --save

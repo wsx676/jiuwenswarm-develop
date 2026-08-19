@@ -173,6 +173,8 @@ def main() -> int:
 
     elif args.task == "invest":
         pool_file = resolve_pool_file(args.pool_file)
+        # M2 修复：自定义池透传 config，Planner 与 Investor 同口径
+        config["pool_file"] = pool_file
         scores = None
         if getattr(args, "use_cached_scores", False):
             cache_path = os.path.join(
@@ -207,6 +209,8 @@ def main() -> int:
     elif args.task == "research":
         pool_file = resolve_pool_file(
             getattr(args, "pool_file", DEFAULT_POOL_FILE))
+        # M2 修复：自定义池透传 config，与 Investor 同口径
+        config["pool_file"] = pool_file
         if args.stage == "collect":
             result = orchestrator.collect_pool(pool_file, args.sector)
         else:

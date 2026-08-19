@@ -16,6 +16,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 from typing import List, Optional
 
 from common.telemetry import RUN_STATS
@@ -171,6 +172,10 @@ class InvestorAgent:
                     f"板块「{sector}」不在公司池内，可选: "
                     f"{'、'.join(pool.keys())}")
             pool = {sector: pool[sector]}
+            # M1 修复：板块过滤后同步收窄白名单，保证「评分缓存复用」
+            # 路径（--use-cached-scores + --sector）同样受板块约束，
+            # 避免全池缓存评分越界进入单板块组合
+            allowed = whitelist_symbols(pool)
 
         # 逐标的评分：research_fn(symbol, name) -> research_data
         # Day 5 批量容错：单标的失败自动重试一次，仍失败则记 0 分
@@ -203,6 +208,10 @@ class InvestorAgent:
                         scores[symbol] = (
                             self.score_research(data)
                             if data is not None else 0.0)
+        else:
+            # M1 修复：复用缓存评分时同样按（板块收窄后的）白名单
+            # 过滤，与实时评分分支口径一致
+            scores = {s: v for s, v in scores.items() if s in allowed}
 
         portfolio = self._allocate(scores, allowed)
         # 评分失败留痕并入决策日志（_allocate 会重置 decision_notes）
@@ -301,6 +310,9 @@ class InvestorAgent:
         log_dir = os.path.join(output_dir, "decision_log")
         os.makedirs(log_dir, exist_ok=True)
         log = {
+            # L4 修复：决策日志写入时间戳，与 run_stats 同口径，
+            # 便于第三方复现时对齐运行批次
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
             "scores": scores,
             "portfolio": portfolio,
             "empty_position": len(portfolio) == 0,

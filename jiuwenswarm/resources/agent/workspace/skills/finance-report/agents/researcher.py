@@ -123,8 +123,9 @@ class ResearcherAgent:
             "knowledge_chunks": [],
             "claims": [],
         }
+        # M4 修复：评分路径不渲染图表（研报路径 research() 仍渲染）
         result.update(self._analyze(
-            plan, quote_data, filing_data, news_data))
+            plan, quote_data, filing_data, news_data, with_charts=False))
         return result
 
     def _load_cache(self, kind: str, symbol: str) -> dict:
@@ -140,7 +141,7 @@ class ResearcherAgent:
             return {}
 
     def _analyze(self, plan: dict, quote_data: dict, filing_data: dict,
-                 news_data: dict) -> dict:
+                 news_data: dict, with_charts: bool = True) -> dict:
         """分析引擎调度 + 图表生成（research / analyze_cached 共用）"""
         symbol = plan.get("target", "")
         # 分析引擎：按 analyze_tasks 门控（计划驱动，行业/宏观
@@ -175,20 +176,23 @@ class ResearcherAgent:
             except Exception as e:  # noqa: BLE001
                 logger.warning("宏观分析失败: %s", e)
 
-        # 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
+        # M4 修复：评分路径（analyze_cached）不渲染图表，批量分析
+        # 阶段跳过 ~100 张与决策无关的 PNG；图表在研报阶段独占生成
         stmt_dicts = [s.to_dict() for s in statements]
         charts = []
-        try:
-            from generators.chart_generator import ChartGenerator
-            gen = ChartGenerator(
-                output_dir=self.config.get("chart_dir"))
-            charts = [
-                gen.generate_price_chart(quote_data, symbol),
-                gen.generate_margin_chart(stmt_dicts, symbol),
-                gen.generate_finance_table(stmt_dicts),
-            ]
-        except Exception as e:  # noqa: BLE001
-            logger.warning("图表生成失败: %s", e)
+        if with_charts:
+            # 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
+            try:
+                from generators.chart_generator import ChartGenerator
+                gen = ChartGenerator(
+                    output_dir=self.config.get("chart_dir"))
+                charts = [
+                    gen.generate_price_chart(quote_data, symbol),
+                    gen.generate_margin_chart(stmt_dicts, symbol),
+                    gen.generate_finance_table(stmt_dicts),
+                ]
+            except Exception as e:  # noqa: BLE001
+                logger.warning("图表生成失败: %s", e)
 
         return {
             "finance_analysis": finance_analysis,
