@@ -78,11 +78,17 @@ def parse_args() -> argparse.Namespace:
     p_company.add_argument("--save", action="store_true", help="保存到输出目录")
 
     p_industry = _with_output_dir(sub.add_parser("industry", help="生成行业研报"))
-    p_industry.add_argument("--name", required=True, help="行业/板块名称")
+    p_industry.add_argument("--name", required=True, help="行业/板块名称（须为公司池板块名，如 消费板块）")
+    p_industry.add_argument(
+        "--pool-file", default="",
+        help="公司池列表 xlsx 路径（缺省 example/上市公司列表.xlsx）")
     p_industry.add_argument("--save", action="store_true")
 
     p_macro = _with_output_dir(sub.add_parser("macro", help="生成宏观研报"))
     p_macro.add_argument("--period", required=True, help="报告周期，如 2026Q2")
+    p_macro.add_argument(
+        "--pool-file", default="",
+        help="公司池列表 xlsx 路径（缺省 example/上市公司列表.xlsx）")
     p_macro.add_argument("--save", action="store_true")
 
     p_invest = _with_output_dir(sub.add_parser("invest", help="投资决策：选股 + 仓位配置"))
@@ -156,17 +162,26 @@ def main() -> int:
                 print(f"投资建议: {json.dumps(result.portfolio, ensure_ascii=False)}")
 
     elif args.task == "industry":
+        # Day 6：自定义池透传 config，Planner 注入板块成分（共享 dict 引用）
+        if args.pool_file:
+            config["pool_file"] = resolve_pool_file(args.pool_file)
         request = ReportRequest(report_type="industry", target=args.name, name=args.name)
         result = orchestrator.generate(request)
+        print(f"审查{'通过' if result.passed_review else '未通过'}: {result.review_notes}")
         if args.save and result.content:
-            path = orchestrator.save_report(result, f"industry_{args.name}.md")
+            # 板块名含 "/"（如 科技/AI/半导体板块）时清洗为合法文件名
+            safe_name = args.name.replace("/", "_")
+            path = orchestrator.save_report(result, f"industry_{safe_name}.md")
             print(f"行业研报已保存: {path}")
 
     elif args.task == "macro":
+        if args.pool_file:
+            config["pool_file"] = resolve_pool_file(args.pool_file)
         request = ReportRequest(
             report_type="macro", target=args.period, period=args.period
         )
         result = orchestrator.generate(request)
+        print(f"审查{'通过' if result.passed_review else '未通过'}: {result.review_notes}")
         if args.save and result.content:
             path = orchestrator.save_report(result, f"macro_{args.period}.md")
             print(f"宏观研报已保存: {path}")

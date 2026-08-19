@@ -433,3 +433,116 @@ class TestRunReportCli:
         args = run_report.parse_args()
         assert args.skip_reports is True
         assert args.use_cached_scores is True
+
+
+class TestIndustryMacroReports:
+    """Day 6：行业/宏观研报端到端（真实编排+撰写+审查，研究数据 mock）"""
+
+    def test_industry_report_end_to_end(self, tmp_path, monkeypatch):
+        """行业研报：八章结构齐全、竞对表与柱状图同源、过审查闸门"""
+        from orchestrator import ReportOrchestrator, ReportRequest
+        from analyzers.industry_analyzer import IndustryAnalysis
+
+        industry = IndustryAnalysis(
+            sector="消费板块",
+            prosperity={"news_count": 10, "positive_hits": 6,
+                        "negative_hits": 1, "sentiment_score": 75,
+                        "level": "景气向上", "policy_signals": ["促消费"]},
+            competition={
+                "companies": ["贵州茅台", "五粮液"],
+                "table": [["指标", "贵州茅台", "五粮液"],
+                          ["营业收入(亿元)", 1500.0, 800.0]],
+                "target_rank": {"revenue": 1},
+                "leader_metrics": ["营业收入(亿元)"]},
+            peers=[("600519", "贵州茅台"), ("000858", "五粮液")],
+            insights=["「消费板块」板块景气度判定为景气向上"
+                      "（情绪分 75，近 10 条相关新闻，"
+                      "正面信号 6 / 负面信号 1）"],
+        )
+        fake_data = {
+            "quote_data": {}, "filing_data": {},
+            "news_data": {"items": [{"title": "消费数据回暖",
+                                     "source": "财联社",
+                                     "date": "2026-08-01"}]},
+            "knowledge_chunks": [], "claims": [],
+            "industry_analysis": industry, "macro_analysis": None,
+            "peer_metrics": {
+                "600519": {"name": "贵州茅台", "net_profit": 800.0,
+                           "revenue": 1500.0},
+                "000858": {"name": "五粮液", "net_profit": 300.0,
+                           "revenue": 800.0}},
+            "report_type": "industry", "charts": [], "citations": [],
+        }
+
+        orch = ReportOrchestrator({
+            "output_dir": str(tmp_path),
+            "chart_dir": str(tmp_path / "charts"),
+        })
+        monkeypatch.setattr(
+            orch.researcher, "research", lambda plan: fake_data)
+        result = orch.generate(ReportRequest(
+            report_type="industry", target="消费板块", name="消费板块"))
+
+        assert "（待生成）" not in result.content  # 非占位骨架
+        for section in ("板块核心观点", "投资结论与配置建议", "行业概况",
+                        "景气度分析", "竞争格局与排名", "估值与资金面",
+                        "风险提示", "数据来源"):
+            assert section in result.content, f"缺失章节: {section}"
+        # 竞对横向对比表与净利润数字注入正文（图文同源）
+        assert "贵州茅台" in result.content
+        assert "1500.0" in result.content
+        assert "免责声明" in result.content
+        assert result.passed_review, result.review_notes
+
+    def test_macro_report_end_to_end(self, tmp_path, monkeypatch):
+        """宏观研报：七章结构齐全、指标与期间同 MacroAnalyzer、过闸门"""
+        from orchestrator import ReportOrchestrator, ReportRequest
+        from analyzers.macro_analyzer import MacroAnalysis
+
+        macro = MacroAnalysis(
+            indicators={
+                "GDP": {"value": 5.2, "period": "2026Q2",
+                        "source": "国家统计局"},
+                "CPI": {"value": 0.4, "period": "2026-07",
+                        "source": "国家统计局"}},
+            policy_trends={"货币政策": "稳健偏松"},
+            sector_impact={"消费板块": "需求端温和修复，中性偏正面"},
+            insights=["GDP 2026Q2 同比 5.2%，宏观延续温和修复"],
+        )
+        fake_data = {
+            "quote_data": {}, "filing_data": {},
+            "news_data": {"items": [{"title": "稳增长政策持续加码",
+                                     "source": "证券时报",
+                                     "date": "2026-07-30"}]},
+            "knowledge_chunks": [], "claims": [],
+            "industry_analysis": None, "macro_analysis": macro,
+            "peer_metrics": {}, "report_type": "macro",
+            "charts": [], "citations": [],
+        }
+
+        orch = ReportOrchestrator({"output_dir": str(tmp_path)})
+        monkeypatch.setattr(
+            orch.researcher, "research", lambda plan: fake_data)
+        result = orch.generate(ReportRequest(
+            report_type="macro", target="2026Q2", period="2026Q2"))
+
+        assert "（待生成）" not in result.content
+        for section in ("宏观核心观点", "宏观结论与板块配置建议",
+                        "核心宏观指标", "政策动向", "对板块的影响分析",
+                        "风险提示", "数据来源"):
+            assert section in result.content, f"缺失章节: {section}"
+        assert "国家统计局" in result.content  # 指标来源标注
+        assert "免责声明" in result.content
+        assert result.passed_review, result.review_notes
+
+    def test_planner_industry_injects_pool(self):
+        """Planner 行业分支注入公司池（板块级聚合依赖竞对名单）"""
+        from agents.planner import PlannerAgent
+        from types import SimpleNamespace
+
+        plan = PlannerAgent({"pool_file": str(POOL_FILE)}).plan(
+            SimpleNamespace(report_type="industry",
+                            target="消费板块", name="消费板块"))
+        assert plan["pool"], "industry 分支应注入公司池"
+        assert plan["collect_tasks"] == ["news", "rag"]
+        assert plan["analyze_tasks"] == ["industry", "macro"]

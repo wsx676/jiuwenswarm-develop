@@ -73,11 +73,16 @@ class TestStructure:
         # 降级模板段落带来源标注（引用闸门基础：三/四/五/六章节）
         assert draft.content.count("数据来源：") >= 4
 
-    def test_non_company_report_placeholder(self):
+    def test_industry_report_full_structure(self):
+        """Day 6：行业研报不再是占位骨架——空数据也降级生成八章结构"""
         req = SimpleNamespace(report_type="industry", name="白酒",
                               target="600519", period="2026-08-17")
         draft = make_writer().write({}, req)
-        assert "待生成" in draft.content
+        assert "待生成" not in draft.content
+        assert "行业分析报告" in draft.content
+        assert len(draft.outline) == 8          # 固定八章模板大纲
+        # 降级模板段带来源标注（引用闸门基础）
+        assert draft.content.count("数据来源：") >= 4
 
 
 class TestRating:

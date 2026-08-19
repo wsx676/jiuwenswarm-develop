@@ -1,228 +1,152 @@
-<p align="center">
-  <img src="docs/assets/images/logo.svg" alt="JiuwenSwarm Logo" width="160" />
-</p>
+# finance-report — 金融分析与投资决策 Agent
 
-<h1 align="center">JiuwenSwarm</h1>
+> 华为 openJiuwen 赛题二参赛项目：基于 JiuwenSwarm 的 Agent 金融分析报告生成
+>
+> 在组委会指定的上市公司池（A 股六大板块、49 个标的）内**自主选股**，输出投资组合配置（`Portfolio.json`）与个股投资研报（`股票代码.md`），全链路可溯源、可复现。
 
-<p align="center">
-  <strong>Understands Your Intent, Evolves Autonomously — Swarm Collaboration for Complex Tasks</strong>
-</p>
-<p align="center">
-  <a href="README.md">English</a>
-  ·
-  <a href="README_CN.md">Chinese</a>
-  ·
-  <a href="docs/README_EN.md">Docs (EN)</a>
-  ·
-  <a href="docs/README.md">Docs</a>
-  ·
-  <a href="https://openjiuwen.com/en/">Website</a>
-  ·
-  <a href="https://swarmskills.openjiuwen.com/">Swarm Skills Hub</a>
-  · 
-  <a href="https://gitcode.com/openJiuwen/jiuwenswarm">GitCode</a>
-</p>
+---
 
-<p align="center">
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-Apache--2.0-green.svg" alt="License" />
-  </a>
-  <a href="https://github.com/openJiuwen-ai/jiuwenswarm/releases">
-    <img src="https://img.shields.io/pypi/v/jiuwenswarm.svg" alt="Release" />
-  </a>
-  <img src="https://img.shields.io/badge/python-%E2%89%A53.11-blue.svg" alt="Python Version" />
-  <img src="https://img.shields.io/badge/os-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20HarmonyOS-lightgrey.svg" alt="OS Support" />
-</p>
+## 一、核心能力
 
-[JiuwenSwarm_Introduction.mp4](docs/assets/videos/JiuwenSwarm_Introduction.mp4)
+| 能力 | 说明 |
+| --- | --- |
+| Leader-Team 多智能体协作 | Planner / Researcher / Writer / Reviewer / Investor 五类 Agent 分工编排，自检反馈循环（审查不通过回流重写 ≤ 2 轮） |
+| Swarmflow 五阶段确定性工作流 | 选股 → 采集 → 分析 → 决策 → 报告，阶段间以落盘产物传递状态（`data/` → `scores_cache.json` → `Portfolio.json` → 研报） |
+| 迭代式 Deep Research 采集 | 行情三级降级链（东方财富 → 腾讯 → 新浪）、财报披露口径取数、新闻多源迭代检索（搜狗 → 新浪滚动 → Bing，max_depth=3 + 信息饱和判断） |
+| RAG 财务知识库 | 13 篇种子方法论，智谱 embedding-3 向量化（MiniMax Key 不支持 embedding 时的替代方案），缺失时自动降级本地 TF-IDF（零依赖、可离线复现） |
+| CodeExecutor 安全分析 | AST 白名单沙箱（仅 pandas/numpy/matplotlib）+ 动态访问原语拦截，财务/行业/宏观分析代码安全执行 |
+| 质量内环 | CitationChecker 引用闸门（引用率 ≥ 90%）+ 权威来源白名单 + 图文同源校验 + Reviewer 四类校验（溯源/图文一致/结构/合规） |
+| 确定性决策 | 因子打分与仓位分配为纯规则（无 LLM、无随机源），固定种子 `SEED=20260819`，两次运行评分完全一致 |
 
-**JiuwenSwarm** is an Agent system that makes multi-agent collaboration truly work. Designed for developers and teams who need to automate complex tasks, it helps users drive multi-agent collaboration, Skill self-evolution, and tool invocation through natural language — delivering end-to-end from intent to result. It runs on a single machine or across a cluster, and you can reach it from a browser, a terminal, or the chat apps you already use.
+## 二、系统架构
 
-### Why JiuwenSwarm
+```
+                        Swarmflow 五阶段工作流（scripts/workflow.py）
+┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+│ 1 选股    │ → │ 2 采集    │ → │ 3 分析    │ → │ 4 决策    │ → │ 5 报告    │
+│ pool     │   │ research │   │ research │   │ invest   │   │ company  │
+│ 公司池校验 │   │ --stage  │   │ --stage  │   │ 评分+仓位 │   │ 入选标的  │
+│ 板块枚举  │   │ collect  │   │ analyze  │   │ 分配      │   │ 逐个研报  │
+└──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+                    ↓               ↓               ↓               ↓
+               data/ 缓存      scores_cache    Portfolio.json   个股投资研报/
+               (49 标的×3类)      .json         + decision_log   {代码}.md
+```
 
-| Capability                      | Value                                                                                                                                                     |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-Agent Collaboration       | The Leader decomposes a complex task and assembles teams, multi agents specialize and negotiate dynamically.                                              |
-| Distributed Agent Swarm         | Leader and Teammates deploy across processes and machines, coordinating at scale.                                                                         |
-| Swarmflow                       | Deterministic multi-stage workflows via Python scripts: the Leader hands off between stage agents; supports **HITL** (`human` / `human_session`), **team token budget**, and TUI **`/swarmflows`** run-tree monitoring. |
-| Skill Self-Evolution            | Automatically detects error signals and user dissatisfaction, then optimizes Skill definitions                                                            |
-| Skill Hub Sharing               | Capability assets are built once and reused everywhere, search, install, remix, and publish Skills through the Swarm Skills Hub                           |
-| Auto Harness                    | Evaluation drive end-to-end optimization of the Harness itself, which learns and improves in practice with no model-weight training                       |
-| AI Infrastructure Compatibility | Compatible with Huawei Cloud MaaS and other mainstream platforms, OpenAI-compatible APIs, and local models                                                |
-| Tool Permissions & Security     | Every step is under your control, tools require approval before execution, file access goes through a whitelist, and sensitive operations are intercepted |
+多智能体编排（单标的研报全流程）：
 
-## Install
+```
+Planner(计划拆解) → Researcher(Deep Research 采集 + RAG 检索)
+                  → Analyzers(财务/行业/宏观 + ChartGenerator 图文同源)
+                  → Writer(YAML 大纲 → 分治式逐段撰写)
+                  → Reviewer(溯源/图文/结构/合规校验) ⇄ 回流重写 ≤ 2 轮
+                  → Investor(因子评分 → Portfolio 配置)
+```
 
-### Desktop
+## 三、目录结构
 
-One-click install, no environment setup — the quickest way to try JiuwenSwarm.
+```
+finance-report/
+├── SKILL.md                    # 技能定义（frontmatter + 触发词 + 使用方式）
+├── README.md                   # 项目说明（本文件）
+├── run_report.py               # CLI 入口（pool/research/company/industry/macro/invest）
+├── orchestrator.py             # 多 Agent 编排（阶段计时 + 批量容错 + 重试留痕）
+├── scripts/
+│   └── workflow.py             # Swarmflow 五阶段确定性工作流（本技能执行定义）
+├── agents/                     # 智能体层
+│   ├── planner.py              # 任务规划（报告类型识别 + 子任务拆解）
+│   ├── researcher.py           # 迭代式 Deep Research + RAG + 混合记忆
+│   ├── writer.py               # 分治式报告撰写
+│   ├── reviewer.py             # 四类校验 + 评分
+│   └── investor.py             # 因子打分 + 仓位分配 + Portfolio 校验
+├── collectors/                 # 数据采集层（行情/财报/新闻/公司池，全部带降级链）
+├── analyzers/                  # 分析引擎层（CodeExecutor 沙箱执行）
+├── generators/                 # 报告生成层（图表/结构化撰写/引用校验）
+├── common/                     # 遥测（阶段耗时/Token/种子）+ LLM 客户端
+├── templates/                  # 报告模板
+└── example/                    # 赛题材料（上市公司列表.xlsx / 提交样例）
+```
 
-| Platform  | Download                                                          | Notes                                         |
-| --------- | ----------------------------------------------------------------- | --------------------------------------------- |
-| Windows   | [Download Windows Version](https://openjiuwen.com/en/jiuwenswarm) | For Windows 10 / 11                           |
-| macOS     | [Download macOS Version](https://openjiuwen.com/en/jiuwenswarm)   | For Intel / Apple Silicon                     |
-| HarmonyOS | [Try now](https://openjiuwen.com/en/jiuwenswarm)                  | HarmonyOS PC, installed via the official site |
+运行产物统一落盘项目根 `reports/finance-report/`（详见其目录下 `README.md`）。
 
-Download and follow the installer prompts to get started.
+## 四、环境要求与配置
 
-On Linux, install via [Command Line](#pip) or [from source](#from-source) below. 
+- **Python ≥ 3.10**；核心依赖已在项目根 `pyproject.toml` 声明：
+  `akshare pandas numpy matplotlib openpyxl requests ipython`
+- 可选（RAG 向量化增强）：`chromadb sentence-transformers`；未安装自动降级本地 TF-IDF
 
-### Command Line
+项目根 `.env`（不随代码提交）：
+
+| 变量 | 用途 | 缺省行为 |
+| --- | --- | --- |
+| `API_KEY` / `ANTHROPIC_API_KEY` | MiniMax LLM（Anthropic 协议，默认 `MiniMax-M2`） | 缺失时撰写/审查走规则降级，全流程仍可跑通 |
+| `ZHIPU_API_KEY` | 智谱 embedding-3（RAG 向量化主路径） | 缺失时降级本地 TF-IDF |
+
+## 五、快速开始
+
+> 以下命令均在技能目录执行：`cd jiuwenswarm/resources/agent/workspace/skills/finance-report`
+
+### 5.1 五阶段全流程（与 Swarmflow 工作流等价）
 
 ```bash
-# Install JiuwenSwarm
-pip install jiuwenswarm
-
-# Use China mirror (recommended)
-pip install jiuwenswarm -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-# Initialize JiuwenSwarm (first-time setup)
-jiuwenswarm-init
-
-# Start JiuwenSwarm
-jiuwenswarm-start
+python run_report.py pool                                       # 1 选股：公司池白名单校验与板块枚举
+python run_report.py research --stage collect --save            # 2 采集：全池数据落盘（缓存优先、断点续采）
+python run_report.py research --stage analyze --save            # 3 分析：因子评分 → scores_cache.json（不渲染图表）
+python run_report.py invest --pool-file example/上市公司列表.xlsx \
+    --use-cached-scores --max-positions 8 --skip-reports --save # 4 决策：Portfolio.json + 决策日志
+python run_report.py company --target 603986 --save             # 5 报告：入选标的逐个生成研报
 ```
 
-After launching, visit http://localhost:5173 to open the frontend.
-
-To use TUI (terminal interface), open a new terminal after starting JiuwenSwarm:
+### 5.2 常用单命令
 
 ```bash
-# Install JiuwenSwarm-tui
-pip install jiuwenswarm-tui
+# 单标的研报（端到端：采集 → 分析 → 撰写 → 审查回流）
+python run_report.py company --target 600519 --name 贵州茅台 --save
 
-# Use China mirror (recommended)
-pip install jiuwenswarm-tui -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 单板块决策（实时评分，不用缓存）
+python run_report.py invest --sector 消费板块 --save
 
-# Start JiuwenSwarm-tui
-jiuwenswarm-tui
+# 空仓决策合法：全部标的评分低于阈值时 Portfolio.json 为 {}，决策日志阐明理由
 ```
 
-### From Source
+### 5.3 Swarmflow 工作流
 
-```bash
-git clone https://github.com/openJiuwen-ai/jiuwenswarm.git
-cd jiuwenswarm
-uv venv
-uv pip install -e .
+经 JiuwenSwarm 框架调度 `scripts/workflow.py` 即可一键完成五阶段全流程（含阶段失败自动重试与降级路径），执行定义与上述 CLI 分步完全等价。
+
+## 六、交付产物（赛题二提交格式）
+
+产物位于项目根 `reports/finance-report/`，提交件格式与 `example/赛题二提交样例/` 一致：
+
+```
+Portfolio.json          # {"股票代码": 权重} 平铺映射（总权重 ≤ 1.0，单标的 ≤ 0.4）
+个股投资研报/
+└── {股票代码}.md        # 入选标的一个代码一份研报（八章节结构 + 图文同源）
 ```
 
-> For detailed installation instructions, see: [Install Guide](docs/en/InstallGuide.md)
+**当前交付状态**：Portfolio 持仓 8 只（603986 / 601168 / 601899 / 300750 / 600426 / 300308 / 600309 / 601600，总权重 0.99，全部在公司池白名单内），8 份入选研报审查得分均 100 分。
 
-## Quick Start
+辅助留痕（非提交件，供溯源与复现）：`decision_log/`（决策日志/评分缓存/运行遥测）、`data/`（采集缓存）、`charts/`（正文引用图表）。
 
-### Configure Model
+## 七、质量保障
 
-JiuwenSwarm supports multiple model platforms: Huawei Cloud MaaS, OpenAI, DeepSeek, DashScope, SiliconFlow, OpenRouter and other OpenAI-compatible APIs, as well as local model deployment.
+| 机制 | 说明 |
+| --- | --- |
+| 单元测试 | `tests/unit_tests/finance/` 18 个文件 **238 passed**（全离线：缓存预置/monkeypatch，不触网） |
+| SwarmFlow 校验器 | swarmskill-creator 校验 **PASS**（0 error） |
+| 事实溯源 | CitationChecker 段落级引用闸门（≥ 90%）+ 权威来源白名单，禁止编造数据 |
+| 图文一致 | 图表与正文消费同一份数据 dict，Reviewer 校验图片本地存在且引用有效 |
+| 提交硬约束 | Investor `validate_portfolio`：白名单内选股、单标的 ≤ 0.4、总权重 ≤ 1.0，越界即抛错 |
+| 失败留痕 | 单标的失败三通道记录（决策日志 notes / run_stats.failures / logger），批量失败不阻断 |
 
-A default model is the one piece of configuration you cannot skip. Set it in the web UI under **More → Configuration**, or edit `~/.jiuwenswarm/config/config.yaml` directly. The file is created on your first `jiuwenswarm-start`, and saving it reloads the config without a restart.
+## 八、可复现性
 
-For example, with DeepSeek：
+- **确定性规则**：因子打分与仓位分配无 LLM、无随机源（打分表见 `agents/investor.py` 注释）；进程启动即 `fix_random_seed(SEED=20260819)` 并记入 `run_stats.json`
+- **状态传递**：采集缓存 `data/`（断点续采）→ 评分缓存 `scores_cache.json` → 决策 → 仅为入选标的生成报告，批量成本随阶段推进收敛
+- **遥测记录**：`decision_log/run_stats.json` 滚动保留最近 10 次运行（各阶段耗时 / LLM 调用次数 / input·output token / 失败记录 / 种子）
+- **复现验证**：实测两次独立运行分析阶段评分完全一致；第三方按第四节配置 + 第五节命令即可重放决策（评分差异只可能来自数据源时间点差异，`collected_at` 已留痕）
 
-```yaml
-model_name: deepseek-v4-flash
-api_base: https://api.deepseek.com
-api_key: sk-your-api-key
-model_provider: OpenAI
-```
+## 九、合规声明
 
-### Start a Conversation
-
-The workbench has two spaces, switched from the top-left selector: **Work**, for office, collaboration, and general tasks, and **Code**, for viewing and modifying code in a project directory .
-
-Each conversation runs in one of two execution modes, picked from the selector in the chat input area:
-
-| Mode         | What it does                                                                            | Use it for                                              |
-| ------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Agent mode   | Single agent handles tasks independently, supports task planning and dynamic adjustment | Most daily tasks, Q&A, code generation, etc.            |
-| Cluster mode | Multi-agent collaboration mode, with a Leader orchestrating multiple specialized agents | Large, complex tasks that need multi-role collaboration |
-
-**Cluster Mode** (default)
-
-Example input:
-
-```text
-Conduct an in-depth research on the new energy vehicle industry and generate an analysis report.
-```
-
-**Agent Mode**
-
-Example input:
-
-```text
-Check today's weather in Beijing, and recommend 3 books about artificial intelligence.
-```
-
-In IM channels and the TUI, the `/mode` command switches between finer-grained sub-modes (`agent.plan`, `agent.fast`, `code.normal`, `code.team`, `team`). See [Modes](https://github.com/openJiuwen-ai/jiuwenswarm/blob/develop/docs/en/Modes.md).
-
-By default, tools ask for approval before they run. If you would rather not confirm every step, adjust the policy in [Tool Permissions & Security](https://github.com/openJiuwen-ai/jiuwenswarm/blob/develop/docs/en/ToolPermissionsSecurity.md).
-
-> For detailed operation guide, see: [Quick Start](docs/en/Quickstart.md)
-
-## Channels
-
-Enable a channel from the **Web UI**, or in `config.yaml` with `enabled: true` and the credentials for that platform, and you can talk to the same agent from an app you already have open.
-
-| Region        | Channels                                                                                                                                                                                                                                                   |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| China         | [Xiaoyi](docs/en/ChinaChannels.md#xiaoyi), [Feishu](docs/en/ChinaChannels.md#feishu-lark), [DingTalk](docs/en/ChinaChannels.md#dingtalk), [WeCom](docs/en/ChinaChannels.md#wecom-wechat-work), [Personal WeChat](docs/en/ChinaChannels.md#personal-wechat) |
-| International | [Telegram](docs/en/InternationalChannels.md#telegram), [Discord](docs/en/InternationalChannels.md#discord), [Slack](docs/en/InternationalChannels.md#slack), [WhatsApp](docs/en/InternationalChannels.md#whatsapp)                                         |
-
-Capabilities differ per platform. Xiaoyi and WhatsApp are private chat only; Feishu, WeCom, DingTalk, Telegram, Discord, and Slack also work in groups, usually by @mentioning the bot. Feishu and WeCom additionally support the Digital Avatar feature. See [Channels](docs/en/Channels.md).
-
-
-
-## Documentation
-
-Full index: [Documentation](docs/README_EN.md)
-
-- Install and first run: [Install Guide](docs/en/InstallGuide.md) · [Quick Start](docs/en/Quickstart.md)
-- The Web UI layout: [Page Overview](docs/en/Page-Overview.md)
-- Configure providers: [Configuration](docs/en/Configuration.md)
-- Build and evolve capabilities: [Skills](docs/en/Skills.md) · [Skill Self-Evolution](docs/en/SkillSelfEvolution.md)
-- Multi-agent and cluster: [Agent Team](docs/en/AgentTeam.md) · [Distributed Team](docs/en/DistributedTeam.md)
-- Memory: [Memory](docs/en/Memory.md) · [Task Memory](docs/en/TaskMemory.md) · [Coding Memory](docs/en/CodingMemory.md)
-- Automation: [Scheduled Tasks](docs/en/ScheduledTasks.md) · [Heartbeat](docs/en/Heartbeat.md)
-- Terminal: [Quick Start (TUI)](docs/en/Quickstart_tui.md) · [Slash Commands](docs/en/SlashCommands.md) · [SwarmFlow (TUI)](docs/en/TUISwarmFlowGuide.md)
-- Extend and integrate: [MCP Configuration](docs/en/MCPConfiguration.md) · [A2A](docs/en/A2A.md) · [E2A Protocol](docs/en/E2A-protocol.md)
-
-## Latest Updates
-
-- **2026-08-06** — `v0.2.4.beta3`  Focuses on cutting cold-start latency in the Agent instance launch path.
-- **2026-07-28** — `v0.2.4.beta2` Improves the scheduling mechanism for tasks and refines front-end interaction logic.
-- **2026-07-24** — `v0.2.4.beta1` Builds out the Code work-mode system and its front-end support: workspace selection and switching, and code-diff display.
-- **2026-07-14** — `v0.2.3` The collaboration capabilities in cluster mode have been enhanced, with new features such as browser sub-agent isolation and support for online sessions within the same session; image attachments and multimodal conversations; Skill-Omni turns visual knowledge into reusable multimodal Skills, with a usage-experience loop improving skill dispatch; new TUI commands (/keybindings, /simplify, /review, /security-review, /btw); stability fixes..
-
-Full notes for every version are on [GitHub Releases](https://github.com/openJiuwen-ai/jiuwenswarm/releases).
-
-## FAQ
-
-For solutions to common issues, see: [FAQ](docs/en/FAQ.md).
-
-## Contributing
-
-We welcome developers to contribute to JiuwenSwarm. You can contribute in the following ways:
-
-- Report bugs, feature requests, or usage issues: [Issues](https://github.com/openJiuwen-ai/jiuwenswarm/issues)
-- Submit code, documentation, or examples: [Pull Requests](https://github.com/openJiuwen-ai/jiuwenswarm/pulls)
-- Share Skills: [Swarm Skills Hub](https://swarmskills.openjiuwen.com/)
-
-Read the [Contributing Guide](docs/en/Contributing.md) first for the debugging workflow, code style, and commit conventions. The contribution map is on the [openJiuwen contribution page](https://openjiuwen.com/en/contribute).
-
-### Contributors
-
-Thanks to all developers who have contributed to JiuwenSwarm: [View Contributor List](https://github.com/openJiuwen-ai/jiuwenswarm/graphs/contributors)
-
-## Community
-
-| Channel          | Purpose                                                      | Link                                                          |
-| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
-| Website          | Product info, updates, and ecosystem                         | [Visit Website](https://openjiuwen.com/en/)                   |
-| SIG              | Technical roadmap, engineering practices, ecosystem building | [Join SIG](https://openjiuwen.com/en/community/sig-center)    |
-| Swarm Skills Hub | Browse, publish, and reuse JiuwenSwarm Skills                | [Visit Swarm Skills Hub](https://swarmskills.openjiuwen.com/) |
-
-## License
-
-This project is licensed under [Apache License 2.0](LICENSE).
-
-This product serves solely as a workflow orchestration tool and does not embed any AI model capabilities. When users integrate AI models for specific business scenarios, they shall bear full responsibility for compliance obligations under the EU AI Act and other relevant regulatory frameworks.
+- 仅使用组委会公布的上市公司列表内标的；无投资价值时支持空仓，并在决策日志阐明逻辑
+- 所有数据与论据标注来源，财务指标取披露口径（不自行计算衍生值）
+- 本 Agent 产出仅供比赛评审与技术研究，不构成任何投资建议

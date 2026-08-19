@@ -50,6 +50,13 @@ class ReviewerAgent:
     def __init__(self, config: Optional[dict] = None):
         self.config = config or {}
 
+    # 结构校验必需章节集：按研报类型区分（行业/宏观无财务/估值章）
+    REQUIRED_SECTIONS = {
+        "company": ["核心观点", "投资结论", "财务分析", "估值分析", "风险提示"],
+        "industry": ["核心观点", "投资结论", "竞争格局", "风险提示"],
+        "macro": ["核心观点", "宏观结论", "风险提示"],
+    }
+
     def review(self, draft, research_data) -> ReviewResult:
         issues = []
 
@@ -61,8 +68,9 @@ class ReviewerAgent:
         consistency_issues = self._check_chart_text_consistency(draft)
         issues.extend(consistency_issues)
 
-        # 3. 结构完整性校验
-        structure_issues = self._check_structure(draft)
+        # 3. 结构完整性校验（必需章节集按研报类型区分）
+        report_type = (research_data or {}).get("report_type", "company")
+        structure_issues = self._check_structure(draft, report_type)
         issues.extend(structure_issues)
 
         # 4. 合规性校验（风险提示等）
@@ -127,12 +135,11 @@ class ReviewerAgent:
                     )
         return issues
 
-    def _check_structure(self, draft) -> List[str]:
-        """结构完整性校验"""
+    def _check_structure(self, draft, report_type: str = "company") -> List[str]:
+        """结构完整性校验（必需章节集按研报类型区分）"""
         issues = []
-        required_sections = [
-            "核心观点", "投资结论", "财务分析", "估值分析", "风险提示",
-        ]
+        required_sections = self.REQUIRED_SECTIONS.get(
+            report_type, self.REQUIRED_SECTIONS["company"])
         for section in required_sections:
             if section not in draft.content:
                 issues.append(f"缺失必要章节: {section}")

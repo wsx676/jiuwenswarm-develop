@@ -53,6 +53,13 @@ class PlannerAgent:
 
         # Day 4：按研报类型拆解子任务（Researcher 按 collect_tasks 采集）
         if request.report_type == "industry":
+            # 行业研报：注入公司池（板块级聚合需要竞对名单与板块成分）
+            try:
+                from collectors.pool_loader import load_pool
+                pool_file = self.config.get("pool_file", DEFAULT_POOL_FILE)
+                plan["pool"] = load_pool(pool_file)
+            except Exception as e:  # noqa: BLE001 池加载失败不阻断
+                logger.warning("行业研报公司池加载失败: %s", e)
             plan["collect_tasks"] = ["news", "rag"]
             plan["analyze_tasks"] = ["industry", "macro"]
             return plan

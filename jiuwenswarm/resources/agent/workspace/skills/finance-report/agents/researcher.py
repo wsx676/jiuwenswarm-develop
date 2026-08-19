@@ -150,6 +150,7 @@ class ResearcherAgent:
         statements = self._to_statements(filing_data)
         finance_analysis = None
         industry_analysis = None
+        peer_metrics = {}
         if "finance" in analyze:
             try:
                 from analyzers.finance_analyzer import FinanceAnalyzer
@@ -160,11 +161,17 @@ class ResearcherAgent:
         if "industry" in analyze:
             try:
                 from analyzers.industry_analyzer import IndustryAnalyzer
+                anchor, competitors = symbol, plan.get("competitors") or []
+                # 行业研报：target 为板块名（在公司池内），取板块首只
+                # 标的作分析锚点、其余标的作竞对（板块级横向对比）
+                pool = plan.get("pool") or {}
+                if symbol in pool and pool[symbol]:
+                    anchor = pool[symbol][0][0]
+                    competitors = [s for s, _ in pool[symbol][1:]]
+                peer_metrics = self._peer_metrics(anchor, competitors, pool)
                 industry_analysis = IndustryAnalyzer().analyze(
-                    symbol, plan.get("pool") or {}, news_data=news_data,
-                    peer_metrics=self._peer_metrics(
-                        symbol, plan.get("competitors") or [],
-                        plan.get("pool") or {}),
+                    anchor, pool, news_data=news_data,
+                    peer_metrics=peer_metrics,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("行业分析失败: %s", e)
@@ -178,9 +185,12 @@ class ResearcherAgent:
 
         # M4 修复：评分路径（analyze_cached）不渲染图表，批量分析
         # 阶段跳过 ~100 张与决策无关的 PNG；图表在研报阶段独占生成
+        # Day 6：公司价/盈利/表格三图仅公司研报适用；行业研报板块
+        # 对比图由 ReportWriter 按 peer_metrics 生成（图文同源）
         stmt_dicts = [s.to_dict() for s in statements]
         charts = []
-        if with_charts:
+        report_type = plan.get("report_type", "company")
+        if with_charts and report_type == "company":
             # 图文同源图表（渲染失败降级为空路径，报告正文仍可生成）
             try:
                 from generators.chart_generator import ChartGenerator
@@ -198,6 +208,10 @@ class ResearcherAgent:
             "finance_analysis": finance_analysis,
             "industry_analysis": industry_analysis,
             "macro_analysis": macro_analysis,
+            # Day 6：行业研报板块对比图与竞对表同源数据透传给 Writer；
+            # report_type 透传给 Reviewer（结构校验章节集按类型区分）
+            "peer_metrics": peer_metrics,
+            "report_type": report_type,
             "charts": charts,
             "citations": self._build_citations(
                 quote_data, filing_data, news_data, []),

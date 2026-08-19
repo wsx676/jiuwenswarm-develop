@@ -21,55 +21,6 @@
       "seed": 20260819,
       "phases": [
         {
-          "phase": "规划:603986",
-          "seconds": 0.55,
-          "error": false
-        },
-        {
-          "phase": "研究:603986",
-          "seconds": 1.6,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:603986",
-          "seconds": 75.56,
-          "error": false
-        },
-        {
-          "phase": "决策:603986",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 77.71,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 6388,
-        "output_tokens": 5365
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "决策",
-          "seconds": 0.55,
-          "error": false
-        }
-      ],
-      "total_seconds": 0.55,
-      "llm": {
-        "calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
           "phase": "规划:601168",
           "seconds": 0.53,
           "error": false
@@ -287,6 +238,60 @@
         "calls": 9,
         "input_tokens": 5921,
         "output_tokens": 5282
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:消费板块",
+          "seconds": 0.57,
+          "error": false
+        },
+        {
+          "phase": "研究:消费板块",
+          "seconds": 9.93,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:消费板块",
+          "seconds": 64.0,
+          "error": false
+        }
+      ],
+      "total_seconds": 74.5,
+      "llm": {
+        "calls": 9,
+        "input_tokens": 6364,
+        "output_tokens": 5009
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:2026Q2",
+          "seconds": 0.0,
+          "error": false
+        },
+        {
+          "phase": "研究:2026Q2",
+          "seconds": 32.39,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:2026Q2",
+          "seconds": 57.14,
+          "error": false
+        }
+      ],
+      "total_seconds": 89.53,
+      "llm": {
+        "calls": 10,
+        "input_tokens": 6033,
+        "output_tokens": 5355
       },
       "failures": []
     }

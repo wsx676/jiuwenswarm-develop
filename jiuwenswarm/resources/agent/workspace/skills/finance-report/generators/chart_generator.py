@@ -108,6 +108,33 @@ class ChartGenerator:
         chart.caption = self.render_table_md(statements, metrics)
         return chart
 
+    def generate_sector_bar(
+        self, sector: str, peer_metrics: dict,
+        title: str = "板块前五大公司最新期净利润对比（亿元）",
+    ) -> Chart:
+        """行业研报：板块成分公司最新期净利润对比柱状图（Top 5）
+
+        图文同源：数值直接取竞对财务指标（亿元，_peer_metrics 口径），
+        缺失净利润的公司不参与（不画假柱，与全链路 None 语义一致）。
+        """
+        ranked = sorted(
+            ((m.get("name") or code, m.get("net_profit"))
+             for code, m in (peer_metrics or {}).items()
+             if m.get("net_profit") is not None),
+            key=lambda kv: kv[1], reverse=True)[:5]
+        chart = Chart(
+            title=title, chart_type="bar",
+            data={"sector": sector,
+                  "companies": [n for n, _ in ranked],
+                  "values": [round(v, 2) for _, v in ranked],
+                  "unit": "亿元"},
+            source="组委会公司池成分公司定期财报（akshare 财务摘要）",
+        )
+        chart.image_path = self._render_sector_bar(
+            [n for n, _ in ranked], [v for _, v in ranked], sector, title)
+        chart.caption = "数据来源：组委会公司池成分公司定期财报（最新报告期，亿元）"
+        return chart
+
     # ------------------------------------------------------------------
     @staticmethod
     def render_table_md(
@@ -230,6 +257,36 @@ class ChartGenerator:
             return self._relative(path)
         except Exception as e:  # noqa: BLE001
             logger.warning("盈利趋势图渲染失败: %s", e)
+            return ""
+
+    def _render_sector_bar(self, names: List[str], values: List[float],
+                           sector: str, title: str) -> str:
+        """渲染板块净利润对比柱状图（柱顶标注数值，图文同源）"""
+        if not values:
+            return ""
+        try:
+            import numpy as np
+            plt = _setup_matplotlib()
+            x = np.arange(len(names))
+            fig, ax = plt.subplots(figsize=(10, 4.5), dpi=150)
+            ax.bar(x, values, 0.6, color="#1f4e9c")
+            for i, v in enumerate(values):
+                ax.text(i, v, f"{v:,.2f}", ha="center",
+                        va="bottom", fontsize=9)
+            ax.set_xticks(x)
+            ax.set_xticklabels(names, fontsize=9)
+            ax.set_ylabel("净利润（亿元）")
+            ax.set_title(title, fontsize=12)
+            ax.grid(axis="y", alpha=0.3)
+            fig.tight_layout()
+            safe = "".join(c if c.isalnum() else "_" for c in sector)
+            fname = f"sector_{safe or 'sector'}.png"
+            path = os.path.join(self.output_dir, fname)
+            fig.savefig(path)
+            plt.close(fig)
+            return self._relative(path)
+        except Exception as e:  # noqa: BLE001 绘图失败不阻断报告生成
+            logger.warning("板块对比柱状图渲染失败: %s", e)
             return ""
 
     def _relative(self, path: str) -> str:
