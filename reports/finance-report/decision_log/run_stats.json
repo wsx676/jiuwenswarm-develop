@@ -4,225 +4,6 @@
       "seed": 20260819,
       "phases": [
         {
-          "phase": "规划:601899",
-          "seconds": 0.55,
-          "error": false
-        },
-        {
-          "phase": "研究:601899",
-          "seconds": 1.65,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:601899",
-          "seconds": 71.34,
-          "error": false
-        },
-        {
-          "phase": "决策:601899",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 73.54,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 6130,
-        "output_tokens": 5023
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:300750",
-          "seconds": 0.53,
-          "error": false
-        },
-        {
-          "phase": "研究:300750",
-          "seconds": 1.54,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:300750",
-          "seconds": 78.14,
-          "error": false
-        },
-        {
-          "phase": "决策:300750",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 80.21,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 5987,
-        "output_tokens": 5255
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:600426",
-          "seconds": 0.55,
-          "error": false
-        },
-        {
-          "phase": "研究:600426",
-          "seconds": 1.58,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:600426",
-          "seconds": 77.41,
-          "error": false
-        },
-        {
-          "phase": "决策:600426",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 79.54,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 6116,
-        "output_tokens": 5445
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:300308",
-          "seconds": 0.54,
-          "error": false
-        },
-        {
-          "phase": "研究:300308",
-          "seconds": 1.58,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:300308",
-          "seconds": 66.5,
-          "error": false
-        },
-        {
-          "phase": "决策:300308",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 68.62,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 6279,
-        "output_tokens": 5222
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:600309",
-          "seconds": 0.5,
-          "error": false
-        },
-        {
-          "phase": "研究:600309",
-          "seconds": 1.49,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:600309",
-          "seconds": 155.98,
-          "error": false
-        },
-        {
-          "phase": "决策:600309",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 157.97,
-      "llm": {
-        "calls": 18,
-        "input_tokens": 12842,
-        "output_tokens": 11792
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:601600",
-          "seconds": 0.56,
-          "error": false
-        },
-        {
-          "phase": "研究:601600",
-          "seconds": 1.55,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:601600",
-          "seconds": 74.41,
-          "error": false
-        },
-        {
-          "phase": "决策:601600",
-          "seconds": 0.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 76.52,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 5921,
-        "output_tokens": 5282
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
-          "phase": "规划:消费板块",
-          "seconds": 0.57,
-          "error": false
-        },
-        {
-          "phase": "研究:消费板块",
-          "seconds": 9.93,
-          "error": false
-        },
-        {
-          "phase": "撰写审查:消费板块",
-          "seconds": 64.0,
-          "error": false
-        }
-      ],
-      "total_seconds": 74.5,
-      "llm": {
-        "calls": 9,
-        "input_tokens": 6364,
-        "output_tokens": 5009
-      },
-      "failures": []
-    },
-    {
-      "seed": 20260819,
-      "phases": [
-        {
           "phase": "规划:2026Q2",
           "seconds": 0.0,
           "error": false
@@ -277,6 +58,180 @@
         "calls": 0,
         "input_tokens": 0,
         "output_tokens": 0
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "分析",
+          "seconds": 64.87,
+          "error": false
+        }
+      ],
+      "total_seconds": 64.87,
+      "llm": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "决策",
+          "seconds": 11.17,
+          "error": false
+        }
+      ],
+      "total_seconds": 11.17,
+      "llm": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:消费板块",
+          "seconds": 2.7,
+          "error": false
+        },
+        {
+          "phase": "研究:消费板块",
+          "seconds": 7.18,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:消费板块",
+          "seconds": 1.77,
+          "error": false
+        }
+      ],
+      "total_seconds": 11.65,
+      "llm": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:2026Q2",
+          "seconds": 0.0,
+          "error": false
+        },
+        {
+          "phase": "研究:2026Q2",
+          "seconds": 8.34,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:2026Q2",
+          "seconds": 0.0,
+          "error": false
+        }
+      ],
+      "total_seconds": 8.34,
+      "llm": {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:消费板块",
+          "seconds": 5.84,
+          "error": false
+        },
+        {
+          "phase": "研究:消费板块",
+          "seconds": 9.6,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:消费板块",
+          "seconds": 59.92,
+          "error": false
+        }
+      ],
+      "total_seconds": 75.36,
+      "llm": {
+        "calls": 8,
+        "input_tokens": 5956,
+        "output_tokens": 2196
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:2026Q2",
+          "seconds": 0.0,
+          "error": false
+        },
+        {
+          "phase": "研究:2026Q2",
+          "seconds": 13.42,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:2026Q2",
+          "seconds": 33.93,
+          "error": false
+        }
+      ],
+      "total_seconds": 47.35,
+      "llm": {
+        "calls": 7,
+        "input_tokens": 4854,
+        "output_tokens": 1816
+      },
+      "failures": []
+    },
+    {
+      "seed": 20260819,
+      "phases": [
+        {
+          "phase": "规划:600519",
+          "seconds": 3.8,
+          "error": false
+        },
+        {
+          "phase": "研究:600519",
+          "seconds": 15.76,
+          "error": false
+        },
+        {
+          "phase": "撰写审查:600519",
+          "seconds": 35.68,
+          "error": false
+        },
+        {
+          "phase": "决策:600519",
+          "seconds": 0.0,
+          "error": false
+        }
+      ],
+      "total_seconds": 55.24,
+      "llm": {
+        "calls": 9,
+        "input_tokens": 6494,
+        "output_tokens": 2393
       },
       "failures": []
     }
