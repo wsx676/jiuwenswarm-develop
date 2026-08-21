@@ -27,6 +27,7 @@ import sys
 
 from orchestrator import ReportOrchestrator, ReportRequest
 from agents.planner import DEFAULT_POOL_FILE
+from common.config_check import ConfigError, validate_startup_config
 from common.telemetry import RUN_STATS
 
 # 默认输出目录（提交格式对齐：个股投资研报/股票代码.md + Portfolio.json）
@@ -177,6 +178,9 @@ def main() -> int:
     # 方案 3：材料补救开关注入（ReportWriter 随 config 生效，默认关）
     if getattr(args, "material_rescue", False):
         config["material_rescue"] = {"enabled": True}
+    # 方案 9：fail-loud 启动校验——关键配置类型/值域非法立即报错退出，
+    # 替代静默 .get() 兜底（无人值守复现时错配第一时间暴露）
+    validate_startup_config(config)
     orchestrator = ReportOrchestrator(config)
 
     if args.task == "company":
@@ -221,6 +225,8 @@ def main() -> int:
         pool_file = resolve_pool_file(args.pool_file)
         # M2 修复：自定义池透传 config，Planner 与 Investor 同口径
         config["pool_file"] = pool_file
+        # 方案 9：pool_file 注入后二次校验（存在性 fail-loud）
+        validate_startup_config(config)
         scores = None
         if getattr(args, "use_cached_scores", False):
             cache_path = os.path.join(
@@ -274,4 +280,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ConfigError as e:
+        # fail-loud：错配立即暴露（退出码 2 区别于运行时异常）
+        print(str(e), file=sys.stderr)
+        sys.exit(2)

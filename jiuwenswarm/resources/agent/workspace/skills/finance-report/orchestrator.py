@@ -17,6 +17,7 @@ from agents.researcher import ResearcherAgent
 from agents.writer import WriterAgent
 from agents.reviewer import ReviewerAgent
 from agents.investor import InvestorAgent
+from common.file_io import atomic_write_json
 from common.telemetry import RUN_STATS, fix_random_seed
 
 logger = logging.getLogger(__name__)
@@ -266,8 +267,6 @@ class ReportOrchestrator:
 
     def save_portfolio(self, portfolio: dict) -> str:
         """保存投资组合为 Portfolio.json（提交格式：{"股票代码": 持仓占比}）"""
-        os.makedirs(self.output_dir, exist_ok=True)
         path = os.path.join(self.output_dir, "Portfolio.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(portfolio, f, ensure_ascii=False, indent=2)
-        return path
+        # 方案 11：原子写，提交产物防中断损坏
+        return atomic_write_json(path, portfolio)

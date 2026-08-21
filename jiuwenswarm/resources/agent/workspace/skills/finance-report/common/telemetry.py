@@ -41,6 +41,8 @@ class RunStats:
                             "llm_removed": 0, "fastpass": 0}
         # 材料三维评估与补救累计（方案 3；未触发时全 0，summary 不输出）
         self.material_rescue = {"failed": 0, "rescued": 0, "degraded": 0}
+        # LLM 主备容灾切换次数（方案 8；未触发为 0，summary 不输出）
+        self.llm_failover = 0
 
     # ------------------------------------------------------------------
     def time_phase(self, title: str) -> "_PhaseTimer":
@@ -77,6 +79,10 @@ class RunStats:
         else:
             self.material_rescue["degraded"] += 1
 
+    def add_llm_failover(self) -> None:
+        """累计一次 LLM 主备切换（方案 8；资源消耗数据保持完整）"""
+        self.llm_failover += 1
+
     # ------------------------------------------------------------------
     def summary(self) -> dict:
         result = {
@@ -99,6 +105,9 @@ class RunStats:
         # 答辩可解释"哪几章走了补救、哪几章降级"；未触发不输出
         if self.material_rescue["failed"]:
             result["material_rescue"] = dict(self.material_rescue)
+        # 主备切换次数（如 llm_failover: 2），答辩可解释资源消耗来源
+        if self.llm_failover:
+            result["llm_failover"] = self.llm_failover
         return result
 
     def save(self, output_dir: str) -> str:
@@ -115,8 +124,9 @@ class RunStats:
             except (OSError, json.JSONDecodeError):
                 runs = []
         runs.append(self.summary())
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"runs": runs[-10:]}, f, ensure_ascii=False, indent=2)
+        # 方案 11：原子写，防中断留下截断 run_stats.json
+        from common.file_io import atomic_write_json
+        atomic_write_json(path, {"runs": runs[-10:]})
         return path
 
 

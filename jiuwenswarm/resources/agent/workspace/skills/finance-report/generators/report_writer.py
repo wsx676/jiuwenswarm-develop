@@ -29,6 +29,17 @@ except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根�
         sys.path.insert(0, _p)
     from generators.chart_generator import Chart
 
+try:
+    from common.rating import (
+        NEUTRAL_LABEL, OVERWEIGHT, REDUCE_WATCH_LABEL, sector_allocation)
+except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根目录
+    import sys
+    _p = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+    from common.rating import (
+        NEUTRAL_LABEL, OVERWEIGHT, REDUCE_WATCH_LABEL, sector_allocation)
+
 logger = logging.getLogger(__name__)
 
 # 报告输出基准目录（图片相对路径以此解析）
@@ -713,8 +724,8 @@ class ReportWriter:
             }
         elif "投资结论" in title:
             level = prosperity.get("level", "")
-            rating = {"景气向上": "超配", "平稳运行": "标配"}.get(
-                level, "低配或观望")
+            # 板块配置词汇统一走 common.rating（方案 5，防口径漂移）
+            rating = sector_allocation(level)
             logic = {
                 "景气向上": "新闻情绪与政策信号偏暖，景气判定向上",
                 "平稳运行": "情绪信号均衡，景气平稳，标配跟踪观察",
@@ -997,4 +1008,5 @@ class ReportWriter:
         for ins in macro_dict.get("insights", []):
             claims.append({"text": ins,
                            "citation": "国家统计局与财联社等权威财经媒体报道"})
+        return claims
         return claims

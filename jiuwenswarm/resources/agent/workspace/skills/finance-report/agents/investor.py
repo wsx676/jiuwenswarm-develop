@@ -13,12 +13,12 @@
 - allow_empty_position: true   允许空仓（须阐明决策逻辑）
 """
 
-import json
 import logging
 import os
 from datetime import datetime
 from typing import List, Optional
 
+from common.rating import EMPTY, FULL, PARTIAL
 from common.telemetry import RUN_STATS
 
 logger = logging.getLogger(__name__)
@@ -313,7 +313,7 @@ class InvestorAgent:
         total_w = round(sum(portfolio.values()), 2)
         n_scores = len(scores)
         if not portfolio:
-            return "empty", (
+            return EMPTY, (
                 f"公司池 {n_scores} 只标的均未达到 "
                 f"{self.score_threshold:.0f} 分入选阈值"
                 f"（数据不足或基本面承压），不具备配置条件，"
@@ -324,12 +324,12 @@ class InvestorAgent:
                     if v >= self.score_threshold)
         below = n_scores - above
         if total_w >= 0.95:
-            return "full", (
+            return FULL, (
                 f"入选 {len(portfolio)} 只标的（平均评分 {avg:.1f}）；"
                 f"池内 {n_scores} 只中 {above} 只达到 "
                 f"{self.score_threshold:.0f} 分阈值，达标覆盖充分，"
                 f"权重归一化至 {total_w:.2f} 满仓配置")
-        return "partial", (
+        return PARTIAL, (
             f"入选 {len(portfolio)} 只标的（平均评分 {avg:.1f}，"
             f"总权重 {total_w:.2f}）；池内 {n_scores} 只中仅 "
             f"{above} 只达到 {self.score_threshold:.0f} 分入选阈值，"
@@ -339,11 +339,10 @@ class InvestorAgent:
 
     def _save(self, portfolio: dict, output_dir: str, scores: dict,
               notes: Optional[List[str]] = None) -> None:
-        """保存 Portfolio.json 与决策日志（成果可复现性）"""
-        os.makedirs(output_dir, exist_ok=True)
-        with open(os.path.join(output_dir, "Portfolio.json"), "w",
-                  encoding="utf-8") as f:
-            json.dump(portfolio, f, ensure_ascii=False, indent=2)
+        """保存 Portfolio.json 与决策日志（成果可复现性；方案 11 原子写）"""
+        from common.file_io import atomic_write_json
+        atomic_write_json(
+            os.path.join(output_dir, "Portfolio.json"), portfolio)
 
         # 决策日志：评分、权重、仓位决策与理由、空仓理由、分散度提示留痕
         decision, rationale = self._position_stance(portfolio, scores)
@@ -365,6 +364,4 @@ class InvestorAgent:
             ),
             "notes": notes or [],
         }
-        with open(os.path.join(log_dir, "decision.json"), "w",
-                  encoding="utf-8") as f:
-            json.dump(log, f, ensure_ascii=False, indent=2)
+        atomic_write_json(os.path.join(log_dir, "decision.json"), log)

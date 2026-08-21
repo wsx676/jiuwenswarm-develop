@@ -24,6 +24,16 @@ except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根�
         sys.path.insert(0, _p)
     from generators.citation_checker import CitationChecker
 
+try:
+    from common.rating import parse_allocation, parse_rating
+except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根目录
+    import os
+    import sys
+    _p = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+    from common.rating import parse_allocation, parse_rating
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +82,9 @@ class ReviewerAgent:
         report_type = (research_data or {}).get("report_type", "company")
         structure_issues = self._check_structure(draft, report_type)
         issues.extend(structure_issues)
+
+        # 3.5 评级词汇校验（方案 5：统一 parse，防口径漂移）
+        issues.extend(self._check_rating(draft, report_type))
 
         # 4. 合规性校验（风险提示等）
         compliance_issues = self._check_compliance(draft)
@@ -144,6 +157,29 @@ class ReviewerAgent:
             if section not in draft.content:
                 issues.append(f"缺失必要章节: {section}")
         return issues
+
+    @staticmethod
+    def _check_rating(draft, report_type: str = "company") -> List[str]:
+        """评级词汇校验（方案 5）：投资结论章须含可识别评级/配置词
+
+        统一经 common.rating 解析（别名归一）；宏观研报无个股/板块
+        评级，跳过。章节缺失由 _check_structure 负责，此处不重复。
+        """
+        if report_type not in ("company", "industry"):
+            return []
+        content = getattr(draft, "content", "") or ""
+        m = re.search(r"##\s*[^\n]*投资结论([\s\S]*?)(?=\n##\s|\Z)", content)
+        if not m:
+            return []
+        section = m.group(1)
+        if report_type == "company":
+            if not parse_rating(section, default=""):
+                return ["投资结论章缺失可识别的公司评级词汇"
+                        "（买入/增持/持有/减持/卖出）"]
+        elif not parse_allocation(section, default=""):
+            return ["投资结论章缺失可识别的板块配置词汇"
+                    "（超配/标配/低配）"]
+        return []
 
     def _check_compliance(self, draft) -> List[str]:
         """合规性校验（L2 修复：风险提示已由 _check_structure 校验，

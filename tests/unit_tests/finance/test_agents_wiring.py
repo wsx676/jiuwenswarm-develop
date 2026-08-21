@@ -126,6 +126,7 @@ class TestReviewerCitationGate:
         from agents.reviewer import ReviewerAgent
         draft = SimpleNamespace(
             content=("## 一、核心观点\n\n## 二、投资结论与仓位建议\n\n"
+                     "评级建议：增持。\n\n"
                      "## 五、财务分析\n\n数据来源：公司定期财报\n\n"
                      "## 六、估值分析\n\n## 七、风险提示\n\n免责声明：x"),
             claims=[{"text": "毛利率 89.6%",
