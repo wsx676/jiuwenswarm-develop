@@ -247,6 +247,13 @@ class ReportWriter:
                     "不要输出 Markdown 标题与图片。"
                 )
                 text = llm.chat(prompt, max_tokens=900, temperature=0.2)
+                if not text.strip():
+                    # 推理模型偶发只输出 thinking 无正文 → 空串；
+                    # 重试一次并显式要求直出正文，避免静默降级模板段
+                    logger.info("LLM 正文为空（%s），重试一次", title)
+                    text = llm.chat(
+                        prompt + "\n\n（直接输出正文，不要输出思考过程）",
+                        max_tokens=900, temperature=0.3)
                 if text.strip():
                     return self._normalize_section(title, text)
             except Exception as e:  # noqa: BLE001 降级模板段
