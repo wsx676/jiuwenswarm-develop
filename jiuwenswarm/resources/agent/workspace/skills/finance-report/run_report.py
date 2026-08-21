@@ -134,6 +134,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir", default=argparse.SUPPRESS, help="输出目录"
     )
+    # 方案 1：新闻三阶段质量过滤开关（默认关闭，复现保持旧口径；
+    # 主 parser 参数须置于子命令之前）
+    parser.add_argument(
+        "--news-filter", action="store_true",
+        help="启用新闻三阶段质量过滤（Stage 0 权威直通 + Stage 1 规则粗筛）")
+    parser.add_argument(
+        "--news-filter-llm", action="store_true",
+        help="新闻过滤追加 Stage 2 LLM 相关性精评"
+             "（须与 --news-filter 同用，消耗 LLM token）")
     return parser.parse_args()
 
 
@@ -146,6 +155,13 @@ def main() -> int:
     max_positions = getattr(args, "max_positions", 0)
     if max_positions:
         config["investor"] = {"max_positions": max_positions}
+    # 方案 1：新闻过滤开关注入（LLM 精评默认关，仅显式 --news-filter-llm 开）
+    if getattr(args, "news_filter", False):
+        config["news_filter"] = {
+            "enabled": True,
+            "llm_grade_enabled": bool(
+                getattr(args, "news_filter_llm", False)),
+        }
     orchestrator = ReportOrchestrator(config)
 
     if args.task == "company":

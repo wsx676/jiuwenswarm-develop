@@ -36,6 +36,9 @@ class RunStats:
         self.phases = []      # [{"phase": 标题, "seconds": 耗时, "error": bool}]
         self.llm = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
         self.failures = []    # [{"where": 阶段/标的, "detail": 摘要}]
+        # 新闻三阶段质量过滤累计（方案 1；过滤关闭时全 0，summary 不输出）
+        self.news_filter = {"received": 0, "kept": 0, "rule_removed": 0,
+                            "llm_removed": 0, "fastpass": 0}
 
     # ------------------------------------------------------------------
     def time_phase(self, title: str) -> "_PhaseTimer":
@@ -54,9 +57,19 @@ class RunStats:
         """失败留痕（批量运行单标的失败不阻断，但须可追溯）"""
         self.failures.append({"where": str(where), "detail": str(detail)[:500]})
 
+    def add_news_filter(self, keyword: str, total: int, kept: int,
+                        rule_removed: int = 0, llm_removed: int = 0,
+                        fastpass: bool = False) -> None:
+        """累计一次新闻质量过滤结果（方案 1 可解释口径留痕）"""
+        self.news_filter["received"] += total
+        self.news_filter["kept"] += kept
+        self.news_filter["rule_removed"] += rule_removed
+        self.news_filter["llm_removed"] += llm_removed
+        self.news_filter["fastpass"] += int(bool(fastpass))
+
     # ------------------------------------------------------------------
     def summary(self) -> dict:
-        return {
+        result = {
             "seed": self.seed,
             "phases": list(self.phases),
             "total_seconds": round(
@@ -64,6 +77,15 @@ class RunStats:
             "llm": dict(self.llm),
             "failures": list(self.failures),
         }
+        # 过滤启用时输出「被过滤数/召回数」（如 7/18），答辩可解释
+        # "为何用 11 条而非 18 条"；关闭时不输出，run_stats 口径不变
+        if self.news_filter["received"]:
+            nf = dict(self.news_filter)
+            nf["filtered"] = nf["received"] - nf["kept"]
+            result["news_filtered"] = (
+                f"{nf['filtered']}/{nf['received']}")
+            result["news_filter"] = nf
+        return result
 
     def save(self, output_dir: str) -> str:
         """落盘 run_stats.json（保留最近 10 次运行记录）"""

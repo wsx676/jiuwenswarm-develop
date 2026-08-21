@@ -55,6 +55,8 @@ class ResearcherAgent:
             self._collect("news", symbol,
                           lambda: self._collect_news(name or symbol))
             if "news" in tasks else {})
+        # 方案 1：三阶段质量过滤（采集后、情绪统计前；默认关保持旧口径）
+        news_data = self._filter_news(plan, news_data)
 
         # 2. RAG 检索：估值/分析方法论知识片段（注入 Writer 材料）
         knowledge_chunks = []
@@ -116,6 +118,8 @@ class ResearcherAgent:
         quote_data = self._load_cache("quote", symbol)
         filing_data = self._load_cache("filing", symbol)
         news_data = self._load_cache("news", symbol)
+        # 方案 1：缓存数据同样过三阶段过滤（不改落盘缓存，仅内存口径）
+        news_data = self._filter_news(plan, news_data)
         result = {
             "quote_data": quote_data,
             "filing_data": filing_data,
@@ -139,6 +143,25 @@ class ResearcherAgent:
         except (OSError, json.JSONDecodeError) as e:
             logger.warning("缓存 %s 读取失败: %s", path, e)
             return {}
+
+    def _filter_news(self, plan: dict, news_data: dict) -> dict:
+        """新闻三阶段质量过滤（方案 1；总开关默认关，关闭时原样返回）
+
+        过滤只在内存进行，不改写落盘缓存；统计留痕 run_stats.json。
+        """
+        if not news_data or not news_data.get("items"):
+            return news_data
+        from collectors.news_filter import NewsQualityFilter
+        flt = NewsQualityFilter(self.config)
+        if not flt.enabled:
+            return news_data
+        keyword = (news_data.get("keyword") or plan.get("name")
+                   or plan.get("target") or "")
+        # 行业研报：板块成分股名作额外实体词（板块新闻常以成分股点名）
+        pool = plan.get("pool") or {}
+        members = pool.get(keyword) or pool.get(plan.get("target", "")) or []
+        extra = [n for _, n in members if n]
+        return flt.filter(news_data, keyword, extra_entities=extra)
 
     def _analyze(self, plan: dict, quote_data: dict, filing_data: dict,
                  news_data: dict, with_charts: bool = True) -> dict:
