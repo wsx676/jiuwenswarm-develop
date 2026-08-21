@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--query-variants", action="store_true",
         help="新闻采集查询多变体扩展（实体型/事件型/完整句型并行采集去重合并）")
+    # 方案 3：材料三维评估与补救循环（默认关；开启后撰写前逐章评估，
+    # 不足触发一次补救，仍不足标注"数据缺失原因"）
+    parser.add_argument(
+        "--material-rescue", action="store_true",
+        help="启用材料三维评估与补救循环（相关性/完整性/时效性规则评估）")
     return parser.parse_args()
 
 
@@ -169,6 +174,9 @@ def main() -> int:
     # 方案 2：查询多变体开关注入（NewsCollector 随 config 生效）
     if getattr(args, "query_variants", False):
         config["query_variants"] = True
+    # 方案 3：材料补救开关注入（ReportWriter 随 config 生效，默认关）
+    if getattr(args, "material_rescue", False):
+        config["material_rescue"] = {"enabled": True}
     orchestrator = ReportOrchestrator(config)
 
     if args.task == "company":

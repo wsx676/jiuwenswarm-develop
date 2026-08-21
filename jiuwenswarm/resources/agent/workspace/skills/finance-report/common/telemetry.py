@@ -39,6 +39,8 @@ class RunStats:
         # 新闻三阶段质量过滤累计（方案 1；过滤关闭时全 0，summary 不输出）
         self.news_filter = {"received": 0, "kept": 0, "rule_removed": 0,
                             "llm_removed": 0, "fastpass": 0}
+        # 材料三维评估与补救累计（方案 3；未触发时全 0，summary 不输出）
+        self.material_rescue = {"failed": 0, "rescued": 0, "degraded": 0}
 
     # ------------------------------------------------------------------
     def time_phase(self, title: str) -> "_PhaseTimer":
@@ -67,6 +69,14 @@ class RunStats:
         self.news_filter["llm_removed"] += llm_removed
         self.news_filter["fastpass"] += int(bool(fastpass))
 
+    def add_material_rescue(self, rescued: bool) -> None:
+        """累计一次材料评估失败及补救结果（方案 3 可解释口径留痕）"""
+        self.material_rescue["failed"] += 1
+        if rescued:
+            self.material_rescue["rescued"] += 1
+        else:
+            self.material_rescue["degraded"] += 1
+
     # ------------------------------------------------------------------
     def summary(self) -> dict:
         result = {
@@ -85,6 +95,10 @@ class RunStats:
             result["news_filtered"] = (
                 f"{nf['filtered']}/{nf['received']}")
             result["news_filter"] = nf
+        # 补救触发时输出 failed/rescued/degraded（如 2/1/1），
+        # 答辩可解释"哪几章走了补救、哪几章降级"；未触发不输出
+        if self.material_rescue["failed"]:
+            result["material_rescue"] = dict(self.material_rescue)
         return result
 
     def save(self, output_dir: str) -> str:

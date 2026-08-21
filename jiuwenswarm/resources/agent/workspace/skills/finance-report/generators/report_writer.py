@@ -171,6 +171,8 @@ class ReportWriter:
                 statements=statements, quote=quote, news=news,
                 finance=finance, industry=industry,
             )
+            material = self._assess_and_rescue(
+                title, material, data, [name], "company")
             body = self._write_section(
                 name, title, desc, material,
                 context=self._digest(sections), revision=revision)
@@ -343,6 +345,38 @@ class ReportWriter:
         """前文摘要：全部已生成内容截取尾部（≤ context_limit 字）"""
         text = "\n".join(f"[{t}] {b}" for t, b in sections)
         return text[-self.context_limit:]
+
+    def _assess_and_rescue(self, title: str, material: str, data: dict,
+                           entities: List[str], report_type: str) -> str:
+        """材料三维评估与补救（方案 3；开关关时原样返回，逐字节一致）
+
+        仅处理 JSON 材料；"数据来源"章 payload 无实体，跳过避免误判。
+        评估通过且无时效提示 → 原样返回；否则补救后重新 dumps。
+        """
+        cfg = self.config.get("material_rescue") or {}
+        if not cfg.get("enabled") or "数据来源" in title:
+            return material
+        try:
+            payload = json.loads(material)
+            if not isinstance(payload, dict):
+                return material
+        except (json.JSONDecodeError, TypeError):
+            return material
+        try:
+            from generators.material_rescue import MaterialRescue
+        except ImportError:  # 兼容包导入/直跑：按绝对路径定位技能根
+            import sys
+            _p = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if _p not in sys.path:
+                sys.path.insert(0, _p)
+            from generators.material_rescue import MaterialRescue
+        rescue = MaterialRescue(self.config, entities=entities)
+        result = rescue.assess(
+            title, payload, report_type, data.get("news_data") or {})
+        if result.ok and not result.stale_note:
+            return material
+        payload = rescue.rescue(title, payload, data, report_type, result)
+        return json.dumps(payload, ensure_ascii=False, default=str)[:2600]
 
     # ------------------------------------------------------------------
     # 材料组织（按章节关键词映射数据，同源一致）
@@ -628,6 +662,8 @@ class ReportWriter:
             material = self._materials_for_industry(
                 title, name=name, industry_dict=industry_dict,
                 peer_metrics=peer_metrics, news=news)
+            material = self._assess_and_rescue(
+                title, material, data, [name], "industry")
             body = self._write_section(
                 name, title, desc, material,
                 context=self._digest(sections), revision=revision,
@@ -838,6 +874,8 @@ class ReportWriter:
             title, desc = part["part_title"], part["part_desc"]
             material = self._materials_for_macro(
                 title, period=period, macro_dict=macro_dict, news=news)
+            material = self._assess_and_rescue(
+                title, material, data, [period], "macro")
             body = self._write_section(
                 period, title, desc, material,
                 context=self._digest(sections), revision=revision,
