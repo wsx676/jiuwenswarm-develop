@@ -91,6 +91,9 @@ class NewsCollector:
     # 规则降级法的深挖维度
     REFINE_DIMENSIONS = ["市场份额", "最新政策", "竞争对手", "业绩展望"]
 
+    # 板块/行业类关键词的通用后缀（多变体扩展时剥离取核心词）
+    SECTOR_SUFFIXES = ("板块", "行业", "产业", "概念", "领域")
+
     # 非新闻页面过滤（官网/百科/行情页等对新闻研究无价值）
     NOISE_URL_RE = re.compile(
         r"baike\.baidu|wikipedia|moutaichina\.com|moutai\.com\.cn"
@@ -103,6 +106,8 @@ class NewsCollector:
         self.max_items = int(self.config.get("max_items", 60))
         self.min_new_per_round = int(self.config.get("min_new_per_round", 2))
         self.strict_source = bool(self.config.get("strict_source", False))
+        # 方案 2：查询多变体扩展（默认关，保持复现确定性口径）
+        self.query_variants = bool(self.config.get("query_variants", False))
         self.proxy = self.config.get("proxy")  # Bing 走代理；None 时自动探测
         # 单关键词 Deep Research 整体时间预算（秒）：反爬退避累计可能很长，
         # 批量跑 49 家标的时必须兜底，防止单个关键词拖垮全流程
@@ -196,8 +201,42 @@ class NewsCollector:
     # 查询生成
     # ------------------------------------------------------------------
     def _initial_queries(self, keyword: str) -> List[str]:
-        """根据关键词生成初始查询集"""
+        """根据关键词生成初始查询集
+
+        默认旧口径（复现确定性）；开启 query_variants（方案 2）后扩展为
+        自然语言多变体并行采集，跨变体按 URL 去重合并（主循环 seen_urls）。
+        """
+        if self.query_variants:
+            return [keyword] + self._variant_queries(keyword)
         return [keyword, f"{keyword} 最新动态", f"{keyword} 政策"]
+
+    def _variant_queries(self, keyword: str) -> List[str]:
+        """自然语言查询多变体扩展（方案 2，来源：得物检索 Agent 实践）
+
+        单关键词召回窄且易被反爬单点卡死（已发生过搜狗 403）。三类变体
+        互补覆盖意图各侧面，完整句子在搜索端的语义编码优于关键词串：
+        - 实体型：点名经营/业绩面
+        - 事件型：最新动态与政策面
+        - 完整句型：自然语言问句（得物实测召回优于关键词串）
+        板块类关键词剥离通用后缀取核心词构造行业表述（"消费板块"→"消费行业"）。
+        """
+        year = datetime.now().year
+        core, is_sector = keyword, False
+        for suf in self.SECTOR_SUFFIXES:
+            if core.endswith(suf) and len(core) > len(suf):
+                core, is_sector = core[:-len(suf)], True
+                break
+        if is_sector:
+            return [
+                f"{keyword} 上市公司 业绩",                   # 实体型
+                f"{core}行业 最新动态 政策",                   # 事件型
+                f"{year}年{core}行业上市公司的经营情况如何",    # 完整句型
+            ]
+        return [
+            f"{keyword} 业绩 经营",                          # 实体型
+            f"{keyword} 最新动态 政策",                       # 事件型
+            f"{year}年{keyword}的经营情况与业绩如何",          # 完整句型
+        ]
 
     def _refine_queries(self, keyword: str, queries: List[str],
                         items: List[NewsItem]) -> List[str]:

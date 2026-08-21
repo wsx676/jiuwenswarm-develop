@@ -143,6 +143,10 @@ def parse_args() -> argparse.Namespace:
         "--news-filter-llm", action="store_true",
         help="新闻过滤追加 Stage 2 LLM 相关性精评"
              "（须与 --news-filter 同用，消耗 LLM token）")
+    # 方案 2：查询多变体扩展（默认关；仅影响新鲜采集，缓存优先不受影响）
+    parser.add_argument(
+        "--query-variants", action="store_true",
+        help="新闻采集查询多变体扩展（实体型/事件型/完整句型并行采集去重合并）")
     return parser.parse_args()
 
 
@@ -162,6 +166,9 @@ def main() -> int:
             "llm_grade_enabled": bool(
                 getattr(args, "news_filter_llm", False)),
         }
+    # 方案 2：查询多变体开关注入（NewsCollector 随 config 生效）
+    if getattr(args, "query_variants", False):
+        config["query_variants"] = True
     orchestrator = ReportOrchestrator(config)
 
     if args.task == "company":

@@ -25,6 +25,78 @@ class TestInitialQueries:
         assert not nc._is_reliable("某某自媒体")
 
 
+class TestQueryVariants:
+    """方案 2：查询多变体扩展（默认关，开启后三类自然语言变体）"""
+
+    def test_disabled_by_default(self):
+        assert not NewsCollector().query_variants
+
+    def test_sector_variants(self):
+        """板块类：剥离通用后缀构造行业表述（消费板块→消费行业）"""
+        from datetime import datetime
+        year = datetime.now().year
+        qs = NewsCollector()._variant_queries("消费板块")
+        assert qs == [
+            "消费板块 上市公司 业绩",               # 实体型
+            "消费行业 最新动态 政策",               # 事件型
+            f"{year}年消费行业上市公司的经营情况如何",  # 完整句型
+        ]
+
+    def test_company_variants(self):
+        from datetime import datetime
+        year = datetime.now().year
+        qs = NewsCollector()._variant_queries("贵州茅台")
+        assert qs == [
+            "贵州茅台 业绩 经营",
+            "贵州茅台 最新动态 政策",
+            f"{year}年贵州茅台的经营情况与业绩如何",
+        ]
+
+    def test_enabled_initial_queries_bare_plus_variants(self):
+        """开启后：裸关键词保底召回 + 3 个变体扩展覆盖"""
+        nc = NewsCollector({"query_variants": True})
+        qs = nc._initial_queries("消费板块")
+        assert qs[0] == "消费板块"
+        assert len(qs) == 4
+
+    def test_cross_variant_url_dedup(self, monkeypatch):
+        """跨变体按 URL 去重合并（得物 SourceCollector 思路）"""
+        nc = NewsCollector({"query_variants": True})
+        searched = []
+
+        def fake_search(query, limit):
+            searched.append(query)
+            # 每个变体都返回同一条 URL → 只应保留 1 条
+            return [_item("http://a.com/same")]
+
+        monkeypatch.setattr(nc, "_search_news", fake_search)
+        monkeypatch.setattr(nc, "_refine_queries", lambda *a: [])
+        data = nc.collect("消费板块", max_depth=1)
+        assert len(searched) == 4          # 裸词 + 3 变体均已执行
+        assert data.count == 1             # 跨变体 URL 去重
+
+    def test_researcher_passes_config(self, monkeypatch):
+        """researcher._collect_news 注入 config（开关随配置生效）"""
+        from agents.researcher import ResearcherAgent
+
+        captured = {}
+
+        class FakeCollector:
+            def __init__(self, config):
+                captured["config"] = config
+
+            def collect(self, keyword):
+                captured["keyword"] = keyword
+                return NewsData(keyword=keyword)
+
+        import collectors.news_collector as mod
+        monkeypatch.setattr(mod, "NewsCollector", FakeCollector)
+        agent = ResearcherAgent({"query_variants": True})
+        agent._collect_news("消费板块")
+        assert captured["config"]["query_variants"] is True
+        assert captured["keyword"] == "消费板块"
+
+
 class TestIterativeLoop:
     def test_dedup_and_trace(self, monkeypatch):
         """两轮迭代：URL 去重、每轮查询与新增数留痕"""

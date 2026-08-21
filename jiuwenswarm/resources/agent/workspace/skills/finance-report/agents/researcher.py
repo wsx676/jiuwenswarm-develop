@@ -320,10 +320,10 @@ class ResearcherAgent:
         from collectors.filing_collector import FilingCollector
         return FilingCollector().collect(symbol).to_dict()
 
-    @staticmethod
-    def _collect_news(keyword: str) -> dict:
+    def _collect_news(self, keyword: str) -> dict:
+        # 注入 config：方案 2 查询多变体等采集开关随配置生效
         from collectors.news_collector import NewsCollector
-        return NewsCollector().collect(keyword).to_dict()
+        return NewsCollector(self.config).collect(keyword).to_dict()
 
     # ------------------------------------------------------------------
     @staticmethod
